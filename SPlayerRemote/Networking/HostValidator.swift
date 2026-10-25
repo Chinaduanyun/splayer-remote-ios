@@ -43,7 +43,7 @@ enum HostValidator {
     /// 将原始主机字符串规范化为可放入 URLComponents.host 的形式。
     /// IPv6 会去掉外层方括号并以小写返回；IPv4 / 主机名保持小写。
     static func normalizeHost(_ raw: String) throws -> String {
-        var host = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let host = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !host.isEmpty else { throw ValidationError.empty }
 
         if host.contains("://") { throw ValidationError.containsScheme }
@@ -63,6 +63,9 @@ enum HostValidator {
 
         // 其余情况先看是否是合法 IPv4，再退回到主机名校验。
         if isValidIPv4(host) { return host.lowercased() }
+        if host.contains("."), host.allSatisfy({ $0.isNumber || $0 == "." }) {
+            throw ValidationError.invalidHost
+        }
 
         guard isValidHostname(host) else { throw ValidationError.invalidHost }
         return host.lowercased()
@@ -88,7 +91,7 @@ enum HostValidator {
 
         var components = URLComponents()
         components.scheme = "http"
-        components.host = normalizedHost
+        components.host = normalizedHost.contains(":") ? "[\(normalizedHost)]" : normalizedHost
         components.port = normalizedPort
         components.path = "/api/external"
         components.user = nil

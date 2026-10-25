@@ -92,6 +92,8 @@ final class RemoteViewModelTests: XCTestCase {
         vm.setSceneActive(false)
         XCTAssertFalse(vm.canControl)
         vm.setSceneActive(true)
+        XCTAssertFalse(vm.canControl, "回前台须先刷新，不能沿用旧状态")
+        await vm.refreshNow()
         XCTAssertTrue(vm.canControl)
     }
 

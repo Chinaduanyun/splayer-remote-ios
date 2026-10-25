@@ -179,8 +179,18 @@ final class RemoteViewModel: ObservableObject {
         if active {
             if connection.isConnected { startPolling() }
         } else {
+            generation += 1
+            isStale = true
             stopPolling()
             invalidateCommand()
+            volumeDraft = nil
+            seekDraft = nil
+            isAdjustingVolume = false
+            isAdjustingSeek = false
+            if connection == .connecting {
+                client = nil
+                connection = .disconnected
+            }
         }
     }
 
@@ -219,7 +229,7 @@ final class RemoteViewModel: ObservableObject {
             let (freshStatus, freshNow) = try await (statusTask, nowTask)
 
             // 丢弃过期或后台返回的响应，避免覆盖新连接 / 后台状态。
-            guard gen == generation, isSceneActive else { return }
+            guard gen == generation, isSceneActive, !Task.isCancelled else { return }
             status = freshStatus
             nowPlaying = freshNow
             if !isAdjustingVolume { volumeDraft = nil }
@@ -228,7 +238,7 @@ final class RemoteViewModel: ObservableObject {
             isStale = false
             lastError = nil
         } catch {
-            guard gen == generation, isSceneActive else { return }
+            guard gen == generation, isSceneActive, !Task.isCancelled else { return }
             if let apiError = error as? RemoteAPIError, case .cancelled = apiError { return }
             if isFatal(error) {
                 // 401/403：连接已失效，停止轮询并进入失败态。
@@ -274,7 +284,7 @@ final class RemoteViewModel: ObservableObject {
         commandTask?.cancel()
         isCommandInFlight = true
         commandTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, gen == self.generation, self.isSceneActive, !Task.isCancelled else { return }
             defer {
                 if gen == self.generation {
                     self.isCommandInFlight = false
