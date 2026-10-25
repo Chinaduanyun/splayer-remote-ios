@@ -22,11 +22,6 @@ jobs:
           xcodebuild -showsdks
       - name: Validate project
         run: python3 scripts/validate_project.py
-      - name: Simulator tests
-        run: |
-          set -o pipefail
-          DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for k,v in d["devices"].items() if "iOS" in k for x in v if "iPhone" in x["name"]))')
-          xcodebuild test -project SPlayerRemote.xcodeproj -scheme SPlayerRemote -destination "platform=iOS Simulator,id=$DEVICE" -parallel-testing-enabled NO -resultBundlePath TestResults.xcresult CODE_SIGNING_ALLOWED=NO 2>&1 | tee test.log
       - name: Build unsigned device IPA
         run: bash scripts/build_unsigned.sh
       - name: Upload unsigned IPA
@@ -36,12 +31,17 @@ jobs:
           path: build/SPlayerRemote-unsigned.ipa
           if-no-files-found: error
           retention-days: 3
+      - name: Simulator tests
+        timeout-minutes: 10
+        run: |
+          set -o pipefail
+          DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for k,v in d["devices"].items() if "iOS" in k for x in v if "iPhone" in x["name"]))')
+          xcodebuild test -project SPlayerRemote.xcodeproj -scheme SPlayerRemote -destination "platform=iOS Simulator,id=$DEVICE" -parallel-testing-enabled NO -resultBundlePath TestResults.xcresult CODE_SIGNING_ALLOWED=NO 2>&1 | tee test.log
       - name: Upload diagnostics
         if: always()
+        timeout-minutes: 2
         uses: actions/upload-artifact@v4
         with:
           name: build-diagnostics
-          path: |
-            test.log
-            TestResults.xcresult
+          path: test.log
           retention-days: 3

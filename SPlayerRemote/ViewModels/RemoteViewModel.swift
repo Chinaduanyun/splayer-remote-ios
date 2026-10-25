@@ -42,6 +42,7 @@ final class RemoteViewModel: ObservableObject {
     private var client: RemoteAPI?
     private var pollTask: Task<Void, Never>?
     private var commandTask: Task<Void, Never>?
+    private var connectionTask: Task<Void, Never>?
     private var generation = 0
     private var isSceneActive = true
     private let pollIntervalNanoseconds: UInt64
@@ -89,6 +90,16 @@ final class RemoteViewModel: ObservableObject {
 
     func connect() async {
         disconnect(resetState: false)
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performConnection()
+        }
+        connectionTask = task
+        await task.value
+    }
+
+    private func performConnection() async {
+        guard isSceneActive, !Task.isCancelled else { return }
 
         let baseURL: URL
         do {
@@ -114,10 +125,11 @@ final class RemoteViewModel: ObservableObject {
         do {
             // info 与 status 都必须成功，才认为连接“好”。
             let fetchedInfo = try await newClient.fetchInfo()
+            guard gen == generation, isSceneActive, !Task.isCancelled else { return }
             let fetchedStatus = try await newClient.fetchStatus()
 
             // 连接被新的 connect/disconnect 取代：静默退出。
-            guard gen == generation else { return }
+            guard gen == generation, !Task.isCancelled else { return }
             // 连接在后台完成：不启用命令，回到断开态，前台恢复时需重连。
             guard isSceneActive else {
                 finishConnectAfterBackground()
@@ -127,7 +139,7 @@ final class RemoteViewModel: ObservableObject {
             status = fetchedStatus
 
             let fetchedNow = try? await newClient.fetchNowPlaying()
-            guard gen == generation else { return }
+            guard gen == generation, !Task.isCancelled else { return }
             guard isSceneActive else {
                 finishConnectAfterBackground()
                 return
@@ -139,7 +151,7 @@ final class RemoteViewModel: ObservableObject {
             lastError = nil
             startPolling()
         } catch {
-            guard gen == generation else { return }
+            guard gen == generation, !Task.isCancelled else { return }
             client = nil
             connection = .failed(message(for: error))
             lastError = message(for: error)
@@ -156,6 +168,8 @@ final class RemoteViewModel: ObservableObject {
 
     func disconnect(resetState: Bool = true) {
         generation += 1
+        connectionTask?.cancel()
+        connectionTask = nil
         stopPolling()
         invalidateCommand()
         client = nil
@@ -180,6 +194,8 @@ final class RemoteViewModel: ObservableObject {
             if connection.isConnected { startPolling() }
         } else {
             generation += 1
+            connectionTask?.cancel()
+            connectionTask = nil
             isStale = true
             stopPolling()
             invalidateCommand()
@@ -286,16 +302,16 @@ final class RemoteViewModel: ObservableObject {
         commandTask = Task { @MainActor [weak self] in
             guard let self, gen == self.generation, self.isSceneActive, !Task.isCancelled else { return }
             defer {
-                if gen == self.generation {
+                if gen == self.generation, !Task.isCancelled {
                     self.isCommandInFlight = false
                     self.commandTask = nil
                 }
             }
             do {
                 try await operation(client)
-                if gen == self.generation { self.lastError = nil }
+                if gen == self.generation, !Task.isCancelled { self.lastError = nil }
             } catch {
-                guard gen == self.generation else { return }
+                guard gen == self.generation, !Task.isCancelled else { return }
                 if let apiError = error as? RemoteAPIError, case .cancelled = apiError { return }
                 self.lastError = self.message(for: error)
             }

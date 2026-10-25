@@ -111,6 +111,7 @@ final class RemoteViewModelTests: XCTestCase {
         await gate.open()
         await connectTask.value
 
+        XCTAssertEqual(api.statusCallCount, 0, "失效连接不能继续发送状态请求")
         XCTAssertFalse(vm.connection.isConnected)
         XCTAssertFalse(vm.canControl)
     }
@@ -253,6 +254,26 @@ final class RemoteViewModelTests: XCTestCase {
         await drainMainQueue()
         XCTAssertFalse(vm.isCommandInFlight)
 
+        vm.disconnect()
+    }
+
+    func testCancelledCommandCannotClearFatalPollingError() async {
+        let api = MockRemoteAPI()
+        let gate = AsyncGate()
+        api.commandDelay = { await gate.wait() }
+        let vm = makeViewModel(api: api)
+        await vm.connect()
+        vm.send(.next)
+        await waitUntil { api.sentCommands.count == 1 }
+        api.statusResult = .failure(RemoteAPIError.unauthorized)
+        api.nowPlayingResult = .failure(RemoteAPIError.unauthorized)
+        await vm.refreshNow()
+        let fatalError = vm.lastError
+        XCTAssertNotNil(fatalError)
+        await gate.open()
+        await drainMainQueue()
+        XCTAssertEqual(vm.lastError, fatalError)
+        XCTAssertFalse(vm.canControl)
         vm.disconnect()
     }
 
