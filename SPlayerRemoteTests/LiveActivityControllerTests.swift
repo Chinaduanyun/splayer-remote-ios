@@ -86,7 +86,7 @@ final class LiveActivityControllerTests: XCTestCase {
         }
         await controller.waitForPendingOperations()
 
-        XCTAssertEqual(backend.requestCount + backend.updateCount, 1, "仅时间戳变化的爆发应被限频")
+        XCTAssertEqual(backend.requestCount + backend.updateCount, 3, "4 秒内按 2 秒间隔接收 3 次心跳，间隔内更新应被抑制")
     }
 
     func testEndSupersedesPendingUpdateAndPreventsLateRecreation() async {
