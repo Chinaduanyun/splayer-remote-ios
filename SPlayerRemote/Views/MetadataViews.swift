@@ -178,10 +178,14 @@ struct QueueSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
 
-    /// (原始下标, 曲目) —— 保留下标以便点播时校验「行身份 + 下标」，解决重复 id 歧义。
-    private var filtered: [(index: Int, track: LanShareTrack)] {
+    /// 渲染时捕获的不可变选择 + 曲目。
+    /// 选择包含主机原始下标 / revision / 队列与连接世代；点播时 VM 会逐项校验。
+    private var filtered: [(selection: QueueSelectionIdentity, track: LanShareTrack)] {
         guard let tracks = remote.queue?.tracks else { return [] }
-        let indexed = Array(tracks.enumerated()).map { (index: $0.offset, track: $0.element) }
+        let indexed = tracks.compactMap { track -> (selection: QueueSelectionIdentity, track: LanShareTrack)? in
+            guard let selection = remote.makeQueueSelection(for: track) else { return nil }
+            return (selection, track)
+        }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return indexed }
         return indexed.filter { item in
@@ -192,17 +196,19 @@ struct QueueSheet: View {
     }
 
     var body: some View {
+        let items = filtered
         NavigationStack {
             Group {
                 if let queue = remote.queue, !queue.tracks.isEmpty {
-                    if filtered.isEmpty {
+                    if items.isEmpty {
                         ContentUnavailableCompat(message: "没有匹配的曲目。")
                     } else {
                         List {
-                            ForEach(filtered, id: \.index) { item in
+                            ForEach(items.indices, id: \.self) { index in
+                                let item = items[index]
                                 Button {
                                     guard remote.canSelectFromQueue else { return }
-                                    remote.playQueueItem(trackId: item.track.id, index: item.index)
+                                    remote.playQueueItem(item.selection)
                                 } label: {
                                     QueueRow(
                                         track: item.track,
@@ -241,6 +247,20 @@ private struct QueuePermissionFooter: View {
 
     var body: some View {
         VStack(spacing: 6) {
+            if let pending = remote.pendingPlayback {
+                Label("切歌确认中：#\(pending.trackId)，请稍候，避免重复点击", systemImage: "hourglass")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let message = remote.collaborationMessage {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let hint = remote.queueReadOnlyHint {
                 Text(hint)
                     .font(.caption2)
@@ -354,12 +374,19 @@ private struct QueueRow: View {
 
 // MARK: - 歌词
 
-/// LRC 歌词面板：按播放位置高亮，展示翻译行；不支持的格式优雅说明。
+/// LRC 歌词面板（完整模式）：实时高亮 + 自动跟随。
+///
+/// - 使用远端权威位置 + 本地外推的 `remote.currentPositionMs`（`TimelineView` 本地重绘，不联网）；
+/// - 曲目 / 歌词 revision 变化时重置为「自动跟随」并校准到当前行；seek 后下一帧也会重新校准高亮；
+/// - 用户手动滑动即暂停跟随，显示「跟随歌词」按钮；点击恢复并立即滚到当前行；
+/// - 只支持真实 LRC（含翻译行），不支持 / 无歌词时优雅说明，绝不伪造，也不做逐字卡拉 OK。
 struct LyricSheet: View {
-    let document: LanShareLyricDocument?
-    let positionMs: Int
-
+    @EnvironmentObject private var remote: RemoteViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var followsPlayback = true
+
+    private var document: LanShareLyricDocument? { remote.lyric }
 
     var body: some View {
         NavigationStack {
@@ -385,32 +412,102 @@ struct LyricSheet: View {
     }
 
     private func linesView(_ document: LanShareLyricDocument) -> some View {
-        let highlight = document.lineIndex(forPositionMs: positionMs)
-        return ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(Array(document.lines.enumerated()), id: \.element.id) { index, line in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(line.text)
-                                .font(index == highlight ? .body.weight(.semibold) : .body)
-                                .foregroundStyle(index == highlight ? Theme.accent : .primary)
-                            if let translation = line.translation {
-                                Text(translation)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+            let position = remote.currentPositionMs
+            let highlight = document.lineIndex(forPositionMs: position)
+            ScrollViewReader { proxy in
+                ZStack(alignment: .bottom) {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 14) {
+                            ForEach(Array(document.lines.enumerated()), id: \.element.id) { index, line in
+                                lineView(line: line, isCurrent: index == highlight)
+                                    .id(line.id)
                             }
                         }
-                        .id(line.id)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 28)
+                    }
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 8).onChanged { _ in
+                            // 用户手动滑动：暂停自动跟随（不阻断本次滑动手势）。
+                            if followsPlayback { followsPlayback = false }
+                        }
+                    )
+                    .onChange(of: highlight) { _, newHighlight in
+                        guard followsPlayback, let newHighlight else { return }
+                        scroll(proxy, document: document, line: newHighlight)
+                    }
+                    .onAppear {
+                        guard followsPlayback, let highlight else { return }
+                        scroll(proxy, document: document, line: highlight, animated: false)
+                    }
+                    .onChange(of: document.revision) { _, _ in
+                        followsPlayback = true
+                        if let current = document.lineIndex(forPositionMs: remote.currentPositionMs) {
+                            scroll(proxy, document: document, line: current, animated: false)
+                        }
+                    }
+                    .onChange(of: remote.songId) { _, _ in
+                        followsPlayback = true
+                        if let current = document.lineIndex(forPositionMs: remote.currentPositionMs) {
+                            scroll(proxy, document: document, line: current, animated: false)
+                        }
+                    }
+
+                    if !followsPlayback {
+                        Button {
+                            followsPlayback = true
+                            if let highlight = document.lineIndex(forPositionMs: remote.currentPositionMs) {
+                                scroll(proxy, document: document, line: highlight)
+                            }
+                        } label: {
+                            Label("跟随歌词", systemImage: "arrow.down.to.line")
+                                .font(.footnote.weight(.semibold))
+                                .frame(minHeight: 44)
+                                .padding(.horizontal, 16)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.accent)
+                        .padding(.bottom, 16)
+                        .accessibilityHint("恢复自动滚动到当前歌词行")
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(20)
             }
-            .onAppear {
-                if let highlight {
-                    proxy.scrollTo(document.lines[highlight].id, anchor: .center)
-                }
+        }
+    }
+
+    private func lineView(line: LanShareLyricLine, isCurrent: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(line.text)
+                .font(isCurrent ? .title3.weight(.semibold) : .body)
+                .foregroundStyle(isCurrent ? Theme.accent : .primary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let translation = line.translation {
+                Text(translation)
+                    .font(isCurrent ? .callout : .caption)
+                    .foregroundStyle(isCurrent ? Color.primary.opacity(0.9) : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isCurrent ? .isSelected : [])
+        .accessibilityLabel(isCurrent ? "当前歌词：\(line.text)" : line.text)
+    }
+
+    private func scroll(
+        _ proxy: ScrollViewProxy,
+        document: LanShareLyricDocument,
+        line: Int,
+        animated: Bool = true
+    ) {
+        guard line >= 0, line < document.lines.count else { return }
+        let action = { proxy.scrollTo(document.lines[line].id, anchor: .center) }
+        if animated, !reduceMotion {
+            withAnimation(.easeInOut(duration: 0.3)) { action() }
+        } else {
+            action()
         }
     }
 

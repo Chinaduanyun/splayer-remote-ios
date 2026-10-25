@@ -47,6 +47,7 @@ final class URLSessionCollaborationTransport: CollaborationSocket {
     private var receiveTask: Task<Void, Never>?
     private var isStopped = false
     private var isOpen = false
+    private var didInvalidateSession = false
 
     var onStateChange: ((RemoteSocketState) -> Void)? {
         get { lock.lock(); defer { lock.unlock() }; return stateHandler }
@@ -104,7 +105,6 @@ final class URLSessionCollaborationTransport: CollaborationSocket {
 
     func stop() {
         var taskToCancel: URLSessionWebSocketTask?
-        var shouldInvalidate = false
         lifecycle.sync {
             guard !isStopped else { return }
             isStopped = true
@@ -115,12 +115,9 @@ final class URLSessionCollaborationTransport: CollaborationSocket {
             if let handler = takeStateChange(.closed) {
                 handler(.closed)
             }
-            shouldInvalidate = ownsSession
         }
         taskToCancel?.cancel(with: .goingAway, reason: nil)
-        if shouldInvalidate {
-            session.invalidateAndCancel()
-        }
+        invalidateOwnedSessionIfNeeded()
     }
 
     @discardableResult
@@ -132,6 +129,16 @@ final class URLSessionCollaborationTransport: CollaborationSocket {
             task.send(.string(text)) { _ in }
         }
         return accepted
+    }
+
+    // MARK: - 测试支持
+
+    /// 仅用于测试：直接安装底层 task，避免真实网络即可验证握手 / 关闭 / 迟到回调。
+    func _installTask(_ installedTask: URLSessionWebSocketTask) {
+        lifecycle.sync {
+            guard !isStopped else { return }
+            task = installedTask
+        }
     }
 
     // MARK: - 内部（全部在 lifecycle 串行队列上）
@@ -156,13 +163,32 @@ final class URLSessionCollaborationTransport: CollaborationSocket {
     }
 
     private func handleClose(_ incoming: URLSessionWebSocketTask) {
+        var closed = false
         lifecycle.sync {
             guard !isStopped, incoming === task else { return }
             isOpen = false
             task = nil
+            // 非预期关闭后禁止本实例再次 start()，避免迟到回调重建通道。
+            isStopped = true
+            closed = true
             if let handler = takeStateChange(.closed) {
                 handler(.closed)
             }
+        }
+        if closed {
+            invalidateOwnedSessionIfNeeded()
+        }
+    }
+
+    /// 自有 URLSession 的清理必须**恰好一次**（stop / 对端关闭 / 接收失败共享）。
+    private func invalidateOwnedSessionIfNeeded() {
+        guard ownsSession else { return }
+        lock.lock()
+        let shouldInvalidate = !didInvalidateSession
+        if shouldInvalidate { didInvalidateSession = true }
+        lock.unlock()
+        if shouldInvalidate {
+            session.invalidateAndCancel()
         }
     }
 
@@ -187,9 +213,12 @@ final class URLSessionCollaborationTransport: CollaborationSocket {
             guard let self, !self.isStopped, source === self.task else { return }
             self.isOpen = false
             self.task = nil
+            // 接收失败后禁止本实例再次 start()，避免迟到回调重建通道。
+            self.isStopped = true
             if let handler = self.takeStateChange(.closed) {
                 handler(.closed)
             }
+            self.invalidateOwnedSessionIfNeeded()
         }
     }
 }

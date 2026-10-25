@@ -68,7 +68,7 @@ struct RootView: View {
             QueueSheet()
         }
         .sheet(isPresented: $showLyric) {
-            LyricSheet(document: remote.lyric, positionMs: remote.currentPositionMs)
+            LyricSheet()
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {

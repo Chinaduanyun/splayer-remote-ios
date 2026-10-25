@@ -258,7 +258,9 @@ private struct VolumeSection: View {
 
 // MARK: - 交通控制簇
 
-/// 大号控制簇：上一曲 / 播放暂停 / 下一曲；停止等次要操作收入菜单。
+/// 大号控制簇：上一曲 / 播放暂停 / 下一曲。
+/// 按用户要求移除尾部“更多 / 停止”菜单，主屏只保留这三个主控制。
+/// （`RemoteCommand.stop` 仍在内部 API 保留，供测试 / 兼容使用。）
 struct TransportCluster: View {
     @EnvironmentObject private var remote: RemoteViewModel
 
@@ -281,23 +283,6 @@ struct TransportCluster: View {
             GlassTransportButton(systemImage: "forward.fill", label: "下一曲", enabled: remote.canControl) {
                 remote.send(.next)
             }
-
-            Menu {
-                Button {
-                    remote.send(.stop)
-                } label: {
-                    Label("停止", systemImage: "stop.fill")
-                }
-                .disabled(!remote.canControl)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 20, weight: .semibold))
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .accessibilityLabel("更多控制")
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .contain)

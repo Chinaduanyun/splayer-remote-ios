@@ -18,7 +18,7 @@ enum RemoteIntentCommandExecutor {
             rawCommand: rawCommand,
             sessionStore: .shared,
             clientFactory: { url, token in RemoteAPIClient(baseURL: url, token: token) },
-            feedback: ActivityIntentFeedback()
+            feedback: ActivityIntentFeedback(sessionStore: .shared)
         )
     }
 
@@ -141,8 +141,11 @@ enum RemoteIntentFeedbackBuilder {
 }
 
 /// 生产反馈：只更新**属于该授权会话**的 Activity；绝不新建 Activity。
+/// 每次更新前都重新校验**同一个**授权会话存储，确保 await 期间失效 / 替换后不再写入旧反馈。
 /// 会话替换后旧的 Activity 内容状态带有旧 sessionID，因此不会被旧刷新覆盖。
 struct ActivityIntentFeedback: RemoteIntentFeedbackApplying {
+    let sessionStore: RemoteIntentAuthorizedSessionStore
+
     func apply(
         sessionId: UUID,
         status: StatusResponse?,
@@ -150,10 +153,13 @@ struct ActivityIntentFeedback: RemoteIntentFeedbackApplying {
         track: LanShareTrack?,
         authoritativeDate: Date?
     ) async {
-        let identity = sessionId.uuidString
         for activity in Activity<RemoteActivityAttributes>.activities {
-            // 目标边界：只更新当前授权会话拥有的 Activity；不因它恰好存在就更新替换后的 Activity。
-            guard activity.contentState.sessionID == identity else { continue }
+            // 逐目标边界：当前授权会话仍有效 + 目标 Activity 属于该会话，二者缺一不可。
+            guard ActivityFeedbackBoundary.shouldUpdate(
+                sessionId: sessionId,
+                sessionIDInActivity: activity.contentState.sessionID,
+                isSessionCurrent: { sessionStore.isCurrent($0) }
+            ) else { continue }
             let state = RemoteIntentFeedbackBuilder.makeState(
                 existing: activity.contentState,
                 status: status,
@@ -163,11 +169,27 @@ struct ActivityIntentFeedback: RemoteIntentFeedbackApplying {
             )
             let staleDate = state.lastUpdate.addingTimeInterval(RemoteActivityLimits.staleInterval)
             await activity.update(ActivityContent(state: state, staleDate: staleDate))
+            // 每个 await 之后重新评估：下一个目标必须再次通过当前授权检查。
         }
     }
 }
 
 #endif
+
+/// 生产 Activity 反馈的逐目标授权边界（纯函数，便于确定性测试）。
+/// 必须同时满足：
+/// 1. 注入的会话存储此刻仍认为该会话有效（在每次 update 前重新求值）；
+/// 2. Activity 内容里的不透明 sessionID 与该会话 ID 完全一致。
+enum ActivityFeedbackBoundary {
+    static func shouldUpdate(
+        sessionId: UUID,
+        sessionIDInActivity: String,
+        isSessionCurrent: (UUID) -> Bool
+    ) -> Bool {
+        guard isSessionCurrent(sessionId) else { return false }
+        return sessionIDInActivity == sessionId.uuidString
+    }
+}
 
 // MARK: - App 进程内的会话授权（不依赖 ActivityKit 类型）
 

@@ -105,6 +105,8 @@ final class LanShareTests: XCTestCase {
         let data = try JSONSerialization.data(withJSONObject: payload)
         let queue = try XCTUnwrap(LanShareQueue.decode(from: data))
         XCTAssertEqual(queue.tracks.map(\.id), ["9"])
+        // F3：丢弃前置无效行后，仍必须保留主机原始下标（9 在主机是 index 1）。
+        XCTAssertEqual(queue.tracks.first?.upstreamIndex, 1)
     }
 
     func testLongTextIsTruncated() throws {
@@ -240,5 +242,45 @@ final class LanShareTests: XCTestCase {
 
     func testPlayAtRejectsNegativeIndex() {
         XCTAssertNil(CollaborationCommand.playAt(index: -1, timestampMs: 1))
+    }
+
+    // MARK: - 歌词模式：确定性行选择 / 时间边界 / 解析
+
+    func testLyricLineSelectionAtTimeBoundaries() {
+        // 夹具：1000ms / 5500ms / 60000ms。
+        let lyric = LanShareFixtures.lyric
+        XCTAssertNil(lyric.lineIndex(forPositionMs: -1))
+        XCTAssertNil(lyric.lineIndex(forPositionMs: 999))
+        XCTAssertEqual(lyric.lineIndex(forPositionMs: 1_000), 0)
+        XCTAssertEqual(lyric.lineIndex(forPositionMs: 5_499), 0)
+        XCTAssertEqual(lyric.lineIndex(forPositionMs: 5_500), 1)
+        XCTAssertEqual(lyric.lineIndex(forPositionMs: 59_999), 1)
+        XCTAssertEqual(lyric.lineIndex(forPositionMs: 60_000), 2)
+        XCTAssertEqual(lyric.lineIndex(forPositionMs: 9_999_999), 2)
+    }
+
+    func testEmptyLyricHasNoHighlight() {
+        let lyric = LanShareLyricDocument(
+            revision: 1,
+            source: LanShareLyricSource(source: "netease", format: "lrc", platform: "netease"),
+            lines: [],
+            isSupported: true
+        )
+        XCTAssertNil(lyric.lineIndex(forPositionMs: 0))
+    }
+
+    func testLRCParserSupportsMultipleTimestampsAndSorts() {
+        let lines = LRCParser.parse(content: "[00:05.00][00:01.00]Repeat\n[00:03.00]Middle", translation: "")
+        XCTAssertEqual(lines.map(\.timeMs), [1_000, 3_000, 5_000])
+        XCTAssertEqual(lines.map(\.text), ["Repeat", "Middle", "Repeat"])
+        XCTAssertEqual(lines.map(\.id), [0, 1, 2])
+    }
+
+    func testLyricTranslationKeepsLineTimeAlignment() {
+        let lyric = LanShareFixtures.lyric
+        XCTAssertEqual(lyric.lines.count, 3)
+        XCTAssertEqual(lyric.lines[0].translation, "第一行")
+        XCTAssertEqual(lyric.lines[1].translation, "第二行")
+        XCTAssertNil(lyric.lines[2].translation)
     }
 }

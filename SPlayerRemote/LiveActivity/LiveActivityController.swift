@@ -3,6 +3,41 @@ import Foundation
 #if canImport(ActivityKit)
 import ActivityKit
 
+/// 尾随交付的可取消句柄。
+protocol TrailingFlushToken: AnyObject {
+    func cancel()
+}
+
+/// 尾随交付调度器：生产使用 `Task.sleep`；测试可注入手动调度器，确定性地推进到 deadline。
+protocol TrailingFlushScheduling: AnyObject {
+    func schedule(after interval: TimeInterval, action: @escaping @MainActor () -> Void) -> TrailingFlushToken
+}
+
+/// 生产调度器：延迟 interval 秒后在 MainActor 执行 action，可取消。
+final class TaskTrailingFlushScheduler: TrailingFlushScheduling {
+    func schedule(after interval: TimeInterval, action: @escaping @MainActor () -> Void) -> TrailingFlushToken {
+        let clamped = min(max(0, interval), 3_600)
+        let task = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(clamped * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            action()
+        }
+        return TaskTrailingFlushToken(task: task)
+    }
+}
+
+final class TaskTrailingFlushToken: TrailingFlushToken {
+    private let task: Task<Void, Never>
+
+    init(task: Task<Void, Never>) {
+        self.task = task
+    }
+
+    func cancel() {
+        task.cancel()
+    }
+}
+
 /// Live Activity 的后端抽象：生产使用 ActivityKit；测试注入记录型替身。
 /// 所有生命周期状态隔离在 MainActor，避免与视图 / ViewModel 的写入竞争。
 @MainActor
@@ -62,6 +97,7 @@ final class LiveActivityController: LiveActivityPresenting {
     private let minUpdateInterval: TimeInterval
     private let staleInterval: TimeInterval
     private let uptime: () -> TimeInterval
+    private let flushScheduler: TrailingFlushScheduling
 
     private var userEnabled: Bool
     private var ended = false
@@ -69,19 +105,24 @@ final class LiveActivityController: LiveActivityPresenting {
     private var operationTask: Task<Void, Never>?
     private var lastKey: ActivityContentKey?
     private var lastUpdateUptime: TimeInterval = 0
+    /// 区间内被抑制的最新快照；在 deadline 交付，无额外输入也不会丢失。
+    private var pendingSnapshot: RemoteActivitySnapshot?
+    private var trailingFlushToken: TrailingFlushToken?
 
     nonisolated init(
         userEnabled: Bool = false,
         minUpdateInterval: TimeInterval = 2,
         staleInterval: TimeInterval = RemoteActivityLimits.staleInterval,
         backend: LiveActivityBackend? = nil,
-        uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+        uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        flushScheduler: TrailingFlushScheduling = TaskTrailingFlushScheduler()
     ) {
         self.backend = backend ?? ActivityKitLiveActivityBackend()
         self.userEnabled = userEnabled
         self.minUpdateInterval = minUpdateInterval
         self.staleInterval = staleInterval
         self.uptime = uptime
+        self.flushScheduler = flushScheduler
     }
 
     var areActivitiesEnabled: Bool { backend.isAuthorized }
@@ -108,17 +149,13 @@ final class LiveActivityController: LiveActivityPresenting {
             || key.connectionAvailable != lastKey?.connectionAvailable
 
         if !lifecycleChanged, now - lastUpdateUptime < minUpdateInterval {
-            // 合幷：区间内只保留最新快照，待下次越过区间时一次性交付，避免无界突发更新。
+            // 合幷：保留最新被抑制的快照，并安排一次可取消的尾随交付，
+            // 即使之后没有任何输入也能在区间边界交付最终状态。
+            pendingSnapshot = snapshot
+            scheduleTrailingFlushIfNeeded()
             return
         }
-        lastKey = key
-        lastUpdateUptime = now
-
-        let expectedGeneration = generation
-        enqueue { [weak self] in
-            guard let self, self.generation == expectedGeneration, self.userEnabled, !self.ended else { return }
-            await self.apply(snapshot)
-        }
+        deliver(snapshot, key: key, now: now)
     }
 
     func end() {
@@ -126,6 +163,8 @@ final class LiveActivityController: LiveActivityPresenting {
         generation += 1
         lastKey = nil
         lastUpdateUptime = 0
+        cancelTrailingFlush()
+        pendingSnapshot = nil
         let expectedGeneration = generation
         enqueue { [weak self] in
             guard let self, self.generation == expectedGeneration else { return }
@@ -139,6 +178,40 @@ final class LiveActivityController: LiveActivityPresenting {
     }
 
     // MARK: - 内部
+
+    /// 交付一个快照（立即），并取消可能存在的尾随交付。
+    private func deliver(_ snapshot: RemoteActivitySnapshot, key: ActivityContentKey, now: TimeInterval) {
+        cancelTrailingFlush()
+        pendingSnapshot = nil
+        lastKey = key
+        lastUpdateUptime = now
+        let expectedGeneration = generation
+        enqueue { [weak self] in
+            guard let self, self.generation == expectedGeneration, self.userEnabled, !self.ended else { return }
+            await self.apply(snapshot)
+        }
+    }
+
+    /// 为最新被抑制的快照安排一次尾随交付（已安排则不重复）。
+    private func scheduleTrailingFlushIfNeeded() {
+        guard trailingFlushToken == nil else { return }
+        let remaining = max(0, minUpdateInterval - max(0, uptime() - lastUpdateUptime))
+        let generationAtSchedule = generation
+        trailingFlushToken = flushScheduler.schedule(after: remaining, action: { [weak self] in
+            guard let self,
+                  self.generation == generationAtSchedule,
+                  self.userEnabled,
+                  !self.ended,
+                  let pending = self.pendingSnapshot else { return }
+            self.trailingFlushToken = nil
+            self.deliver(pending, key: ActivityContentKey(snapshot: pending), now: self.uptime())
+        })
+    }
+
+    private func cancelTrailingFlush() {
+        trailingFlushToken?.cancel()
+        trailingFlushToken = nil
+    }
 
     private func apply(_ snapshot: RemoteActivitySnapshot) async {
         let state = RemoteActivityAttributes.ContentState(snapshot: snapshot)

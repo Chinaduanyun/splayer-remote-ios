@@ -84,6 +84,9 @@ struct LanShareTrack: Equatable, Identifiable {
     let album: LanShareAlbum?
     let durationMs: Int
     let coverURL: URL?
+    /// 上游队列中的**原始下标**（0 基）。解码时可能丢弃无 id 的行，
+    /// 因此展示数组下标可能不等于主机下标；点播必须使用本字段。`nil` 表示不可选。
+    var upstreamIndex: Int? = nil
 
     /// 艺人行，例如 `A / B`；没有任何艺人时为 `nil`。
     /// 数量与聚合长度均有限制，避免异常数据撑爆 UI / Activity 载荷。
@@ -101,7 +104,7 @@ struct LanShareTrack: Equatable, Identifiable {
         return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
     }
 
-    static func decode(_ raw: [String: Any]) -> LanShareTrack? {
+    static func decode(_ raw: [String: Any], upstreamIndex: Int? = nil) -> LanShareTrack? {
         guard let id = LanShareSanitizer.identifier(raw["id"]) else { return nil }
         let artists: [LanShareArtist] = ((raw["artists"] as? [[String: Any]]) ?? [])
             .prefix(LanShareLimits.maxArtists)
@@ -127,7 +130,8 @@ struct LanShareTrack: Equatable, Identifiable {
             artists: artists,
             album: album,
             durationMs: max(0, LanShareSanitizer.int(raw["duration"]) ?? 0),
-            coverURL: trackCover ?? album?.coverURL
+            coverURL: trackCover ?? album?.coverURL,
+            upstreamIndex: upstreamIndex
         )
     }
 }
@@ -170,9 +174,11 @@ struct LanShareQueue: Equatable {
         let revision = LanShareSanitizer.int(root["revision"]) ?? 0
         let playIndex = LanShareSanitizer.int(payload["playIndex"])
         let rawTracks = (payload["tracks"] as? [[String: Any]]) ?? []
+        // 保留下游**原始下标**：无 id 的行会被丢弃，展示下标不能直接当作主机下标发送。
         let tracks = rawTracks
             .prefix(LanShareLimits.maxTracks)
-            .compactMap(LanShareTrack.decode)
+            .enumerated()
+            .compactMap { index, raw in LanShareTrack.decode(raw, upstreamIndex: index) }
         return LanShareQueue(revision: revision, playIndex: playIndex, tracks: tracks)
     }
 }
@@ -279,6 +285,19 @@ struct CollaborationPendingPlayback: Equatable {
     let index: Int
     let revision: Int
     let sentAt: Date
+}
+
+/// 队列行的一次**不可变点播选择**。
+///
+/// 由 UI 在渲染行时捕获，点播前必须与当前连接 / 队列逐项比对；
+/// 特别是 `upstreamIndex` 必须是主机原始下标，不能使用可能被丢弃行压缩过的展示下标。
+struct QueueSelectionIdentity: Equatable {
+    let trackId: String
+    let source: String?
+    let upstreamIndex: Int
+    let revision: Int
+    let queueGeneration: Int
+    let connectionGeneration: Int
 }
 
 /// 协作控制 WS 上送的命令信封。

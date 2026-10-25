@@ -104,6 +104,8 @@ final class RemoteViewModel: ObservableObject {
 
     /// 队列快照（`/api/lanShare/getQueue`）。`nil` 表示尚未获取或不可用。
     @Published private(set) var queue: LanShareQueue?
+    /// 队列安装世代：每次安装 / 清空新队列递增（不可变选择据此校验收渲染快照）。
+    @Published private(set) var queueGeneration = 0
     /// 按外部 `songId` 匹配到的当前曲目（绝不依赖可能过期的 `playIndex`）。
     @Published private(set) var currentTrack: LanShareTrack?
     /// 当前曲目歌词（`/api/lanShare/getLyric`）。
@@ -169,11 +171,15 @@ final class RemoteViewModel: ObservableObject {
     /// 场景是否不处于后台（`.active` 与 `.inactive` 均视为前台）。
     private var isSceneActive: Bool { scenePhase != .background }
 
-    private var isCollaborationStatusInFlight = false
+    /// 授权状态请求身份：递增即作废旧响应；`active...` 为当前在途请求身份。
+    private var collaborationStatusRequestID = 0
+    private var activeCollaborationStatusRequestID: Int?
     private var collaborationSocket: CollaborationSocket?
     private var collaborationSocketGeneration = 0
     private var pendingPlaybackTask: Task<Void, Never>?
     private let collaborationTimeoutNanoseconds: UInt64
+    /// 队列在哪个连接世代被成功刷新；前台恢复后、刷新完成前保持不可点播。
+    private var queueFreshnessGeneration = -1
 
     /// 本次连接的不可变配置：REST + WS 重试共用，绝不读取编辑中的设置。
     private var activeConfiguration: ConnectionConfiguration?
@@ -242,19 +248,21 @@ final class RemoteViewModel: ObservableObject {
 
     // MARK: - 派生状态
 
-    /// 只有「场景激活 + 已连接 + 非过期 + 无命令在途」时才允许控制，
-    /// 后台或数据过期一律禁用不安全控件。
+    /// 只有「场景激活 + 已连接 + 非过期 + 无命令在途 + 无待确认点播」时才允许控制，
+    /// 后台、数据过期或点播待确认一律禁用不安全控件。
     var canControl: Bool {
-        isSceneActive && connection.isConnected && !isStale && !isCommandInFlight
+        isSceneActive && connection.isConnected && !isStale && !isCommandInFlight && pendingPlayback == nil
     }
 
     /// 仅在已知有效时长时允许跳转。
     var canSeek: Bool { canControl && currentDurationMs > 0 }
 
-    /// 仅在「可控制 + 协作通道可控 + 队列可用」时才允许从队列点播。
+    /// 仅在「可控制 + REST 健康 + 当前世代队列已刷新 + 协作通道可控」时才允许从队列点播。
     /// 与 HTTP 控制共享 `canControl` 互斥，避免同时提交两条命令。
     var canSelectFromQueue: Bool {
         canControl
+            && restAvailable
+            && queueFreshnessGeneration == generation
             && collaborationState == .live
             && metadataState == .available
             && !(queue?.tracks.isEmpty ?? true)
@@ -266,6 +274,8 @@ final class RemoteViewModel: ObservableObject {
         if canSelectFromQueue { return nil }
         switch collaborationState {
         case .live:
+            if !restAvailable { return "REST 数据已降级，队列暂时只读。" }
+            if queueFreshnessGeneration != generation { return "队列尚未在当前连接中刷新，暂时只读。" }
             return canControl ? "可点播当前队列中的曲目。" : "数据过期或场景不可用，暂时无法点播。"
         case .connecting:
             return "正在建立协作通道，稍后可点播当前队列。"
@@ -524,7 +534,9 @@ final class RemoteViewModel: ObservableObject {
         invalidateCommand()
         teardownCollaborationSocket()
         invalidatePendingPlayback()
+        invalidateCollaborationStatusRequest()
         collaborationState = .disabled
+        queueFreshnessGeneration = -1
         isStale = true
         volumeDraft = nil
         if isAdjustingSeek { seekDraftInvalidated = true }
@@ -819,6 +831,7 @@ final class RemoteViewModel: ObservableObject {
                 teardownSocket()
                 invalidateCommand()
                 invalidateIntentSession()
+                resetCollaboration()
                 if isAuthenticationFailure(error) { authenticationFailureLatched = true }
                 isStale = true
                 isRestDegraded = true
@@ -1131,18 +1144,24 @@ final class RemoteViewModel: ObservableObject {
             lastMetadataAttempt = dateProvider()
             if let fetchedQueue {
                 queue = fetchedQueue
+                queueGeneration += 1
+                queueFreshnessGeneration = connectionGen
                 metadataState = .available
                 metadataError = nil
                 recomputeCurrentTrack()
             } else {
                 // ok:false：诚实进入不可用，不保留过期展示。
                 clearMetadataPresentation()
+                queueGeneration += 1
+                queueFreshnessGeneration = -1
                 metadataState = .unavailable
             }
         } catch {
             guard isCurrent() else { return }
             lastMetadataAttempt = dateProvider()
             clearMetadataPresentation()
+            queueGeneration += 1
+            queueFreshnessGeneration = -1
             metadataState = .unavailable
             metadataError = message(for: error)
         }
@@ -1177,6 +1196,8 @@ final class RemoteViewModel: ObservableObject {
         pendingMetadataRefresh = false
         metadataTrackId = nil
         queue = nil
+        queueGeneration += 1
+        queueFreshnessGeneration = -1
         currentTrack = nil
         lyric = nil
         metadataState = .idle
@@ -1187,29 +1208,47 @@ final class RemoteViewModel: ObservableObject {
     // MARK: - 协作控制（授权后才可点播）
 
     /// 拉取 `/api/lanShare/getStatus` 并根据授权结果建立 / 关闭协作通道。
-    /// 只使用**同一次连接捕获的**主机 + 凭据；绝不借用电脑授权，也不自造授权。
+    /// 响应必须同时匹配：请求身份、连接世代、同一主机与前台状态；旧响应 / 旧失败一律丢弃。
     func refreshCollaborationStatus() async {
         guard isSceneActive, connection.isConnected, client != nil,
               let configuration = activeConfiguration else { return }
-        if isCollaborationStatusInFlight { return }
-        isCollaborationStatusInFlight = true
-        defer { isCollaborationStatusInFlight = false }
+        // 同一世代同一时刻只允许一个授权请求。
+        guard activeCollaborationStatusRequestID == nil else { return }
+        let connectionGen = generation
+        collaborationStatusRequestID += 1
+        let requestID = collaborationStatusRequestID
+        activeCollaborationStatusRequestID = requestID
+        defer {
+            if activeCollaborationStatusRequestID == requestID {
+                activeCollaborationStatusRequestID = nil
+            }
+        }
         guard let client else { return }
+
         do {
             let status = try await client.fetchLanShareStatus()
-            // 连接可能已在 await 期间被替换 / 断开：丢弃过期结果。
-            guard isSceneActive, connection.isConnected,
+            guard requestID == collaborationStatusRequestID,
+                  activeCollaborationStatusRequestID == requestID,
+                  connectionGen == generation,
+                  isSceneActive,
+                  connection.isConnected,
                   configuration.baseURL == activeConfiguration?.baseURL else { return }
             collaborationStatus = status
             if status.canCollaborate {
-                startCollaborationSocket()
+                startCollaborationSocket(configuration: configuration, token: status.wsToken ?? "")
             } else {
                 teardownCollaborationSocket()
+                invalidatePendingPlayback()
                 collaborationState = (status.enabled && status.collabEnabled) ? .unauthorized : .disabled
             }
         } catch {
-            guard isSceneActive, connection.isConnected else { return }
+            guard requestID == collaborationStatusRequestID,
+                  activeCollaborationStatusRequestID == requestID,
+                  connectionGen == generation,
+                  isSceneActive,
+                  connection.isConnected else { return }
             teardownCollaborationSocket()
+            invalidatePendingPlayback()
             collaborationState = .unavailable
             collaborationMessage = "无法获取协作授权状态，元数据仍可浏览。"
         }
@@ -1221,16 +1260,36 @@ final class RemoteViewModel: ObservableObject {
         Task { @MainActor [weak self] in await self?.refreshCollaborationStatus() }
     }
 
-    /// 从队列点播：仅当协作通道可控时可用。
-    /// 校验「行身份 + 下标 + 当前队列 revision」；发送后只记录待确认，绝不重发。
-    func playQueueItem(trackId: String, index: Int) {
+    /// 由 UI 在渲染行时构建不可变选择；无主机原始下标时返回 nil（不可点播）。
+    func makeQueueSelection(for track: LanShareTrack) -> QueueSelectionIdentity? {
+        guard let queue, let upstreamIndex = track.upstreamIndex else { return nil }
+        return QueueSelectionIdentity(
+            trackId: track.id,
+            source: track.source,
+            upstreamIndex: upstreamIndex,
+            revision: queue.revision,
+            queueGeneration: queueGeneration,
+            connectionGeneration: generation
+        )
+    }
+
+    /// 点播一个不可变选择：与当前连接 / 队列逐项比对后，只发送一次 playAt。
+    /// 使用主机原始下标（`upstreamIndex`），绝不使用可能被丢弃行压缩过的展示下标。
+    func playQueueItem(_ selection: QueueSelectionIdentity) {
         guard canSelectFromQueue, let queue else { return }
-        guard index >= 0, index < queue.tracks.count else {
+        guard selection.connectionGeneration == generation,
+              selection.queueGeneration == queueGeneration,
+              selection.revision == queue.revision else {
+            collaborationMessage = "队列已更新，请刷新后重试。"
+            return
+        }
+        guard let track = queue.tracks.first(where: { $0.upstreamIndex == selection.upstreamIndex }) else {
             collaborationMessage = "该曲目已不在当前队列中。"
             return
         }
-        // 当前队列必须仍把该下标映射到同一 id，避免过期快照误播其它曲目。
-        guard queue.tracks[index].id == trackId else {
+        // 行身份 + 来源必须仍匹配该主机下标，避免同 id / 不同来源 / 重复 id 误播。
+        guard track.id == selection.trackId,
+              (track.source ?? "").caseInsensitiveCompare(selection.source ?? "") == .orderedSame else {
             collaborationMessage = "队列已更新，请刷新后重试。"
             return
         }
@@ -1238,26 +1297,30 @@ final class RemoteViewModel: ObservableObject {
             collaborationMessage = "协作通道尚未就绪，请稍后重试。"
             return
         }
+        guard pendingPlayback == nil else { return }
+
         let timestamp = Int(dateProvider().timeIntervalSince1970 * 1000)
-        guard let body = CollaborationCommand.playAt(index: index, timestampMs: timestamp),
+        guard let body = CollaborationCommand.playAt(index: selection.upstreamIndex, timestampMs: timestamp),
               let text = String(data: body, encoding: .utf8) else { return }
-        guard socket.send(text: text) else {
-            collaborationMessage = "协作通道暂时不可用，请重试。"
-            return
-        }
+
+        // 先占用共享命令槽（pending），再派发；失败 / 超时 / 取消都必须释放且绝不重发。
         pendingPlayback = CollaborationPendingPlayback(
-            trackId: trackId,
-            index: index,
-            revision: queue.revision,
+            trackId: selection.trackId,
+            index: selection.upstreamIndex,
+            revision: selection.revision,
             sentAt: dateProvider()
         )
         collaborationMessage = nil
+        guard socket.send(text: text) else {
+            invalidatePendingPlayback()
+            collaborationMessage = "协作通道暂时不可用，请重试。"
+            return
+        }
         beginPendingPlaybackTimeout()
     }
 
-    private func startCollaborationSocket() {
-        guard let configuration = activeConfiguration,
-              let token = collaborationStatus?.wsToken, !token.isEmpty else { return }
+    private func startCollaborationSocket(configuration: ConnectionConfiguration, token: String) {
+        guard !token.isEmpty else { return }
         guard let factory = collaborationSocketFactory else {
             collaborationState = .unavailable
             return
@@ -1282,12 +1345,19 @@ final class RemoteViewModel: ObservableObject {
     }
 
     private func handleCollaborationState(_ state: RemoteSocketState, generation gen: Int) {
-        guard gen == collaborationSocketGeneration, isSceneActive, connection.isConnected else { return }
+        guard gen == collaborationSocketGeneration else { return }
         switch state {
         case .open:
+            guard isSceneActive, connection.isConnected else {
+                teardownCollaborationSocket()
+                return
+            }
             collaborationState = .live
         case .closed:
-            collaborationSocket = nil
+            // 非预期关闭：世代安全地彻底 teardown，并作废待确认（绝不重放）。
+            teardownCollaborationSocket()
+            invalidatePendingPlayback()
+            collaborationMessage = "协作通道已断开，队列暂时只读。"
             collaborationState = (collaborationStatus?.canCollaborate == true) ? .unavailable : .disabled
         case .idle, .connecting:
             break
@@ -1305,9 +1375,16 @@ final class RemoteViewModel: ObservableObject {
     private func resetCollaboration() {
         teardownCollaborationSocket()
         invalidatePendingPlayback()
+        invalidateCollaborationStatusRequest()
         collaborationStatus = nil
         collaborationState = .disabled
         collaborationMessage = nil
+    }
+
+    /// 作废在途授权状态请求：旧响应 / 旧失败不得影响新连接或新世代。
+    private func invalidateCollaborationStatusRequest() {
+        collaborationStatusRequestID += 1
+        activeCollaborationStatusRequestID = nil
     }
 
     private func beginPendingPlaybackTimeout() {

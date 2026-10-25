@@ -130,6 +130,67 @@ final class LiveActivityControllerTests: XCTestCase {
         XCTAssertEqual(backend.requestCount + backend.updateCount, 2, "播放 / 暂停变化必须立即交付")
     }
 
+    // MARK: - F7：尾随合幷交付（无额外输入）
+
+    func testTrailingSnapshotDeliveredWithoutFurtherInput() async {
+        let backend = SpyLiveActivityBackend()
+        var now: TimeInterval = 100
+        let scheduler = ManualTrailingFlushScheduler()
+        let controller = LiveActivityController(
+            userEnabled: true,
+            minUpdateInterval: 2,
+            backend: backend,
+            uptime: { now },
+            flushScheduler: scheduler
+        )
+
+        controller.startOrUpdate(snapshot(title: "A"))
+        await controller.waitForPendingOperations()
+        XCTAssertEqual(backend.lastTitle, "A")
+
+        now = 100.5
+        controller.startOrUpdate(snapshot(title: "B"))
+        await controller.waitForPendingOperations()
+        XCTAssertEqual(backend.lastTitle, "A", "区间内的 B 暂不交付")
+        XCTAssertNotNil(scheduler.scheduledAction, "必须安排一次尾随交付")
+        XCTAssertEqual(scheduler.scheduledDelay ?? -1, 1.5, accuracy: 0.001)
+
+        now = 102
+        scheduler.fire()
+        await controller.waitForPendingOperations()
+        XCTAssertEqual(backend.lastTitle, "B", "无额外输入也必须交付尾随快照")
+    }
+
+    func testEndCancelsTrailingFlushWithoutRecreation() async {
+        let backend = SpyLiveActivityBackend()
+        var now: TimeInterval = 100
+        let scheduler = ManualTrailingFlushScheduler()
+        let controller = LiveActivityController(
+            userEnabled: true,
+            minUpdateInterval: 2,
+            backend: backend,
+            uptime: { now },
+            flushScheduler: scheduler
+        )
+
+        controller.startOrUpdate(snapshot(title: "A"))
+        await controller.waitForPendingOperations()
+        now = 100.5
+        controller.startOrUpdate(snapshot(title: "B"))
+        await controller.waitForPendingOperations()
+        XCTAssertEqual(backend.requestCount + backend.updateCount, 1)
+
+        controller.end()
+        await controller.waitForPendingOperations()
+        XCTAssertGreaterThanOrEqual(scheduler.cancelCount, 1, "end 必须取消尾随交付")
+
+        now = 102
+        scheduler.fire()
+        await controller.waitForPendingOperations()
+        XCTAssertEqual(backend.requestCount + backend.updateCount, 1, "end 后尾随动作不得重建 / 追加")
+        XCTAssertEqual(backend.endCount, 1)
+    }
+
     func testEndSupersedesPendingUpdateAndPreventsLateRecreation() async {
         let backend = SpyLiveActivityBackend()
         var now: TimeInterval = 100
@@ -233,7 +294,7 @@ final class LiveActivityControllerTests: XCTestCase {
     /// R4：命令后只拿到 status（拿不到 now-playing 身份）时，不得把旧曲目标为刚更新。
     func testStatusOnlyRefreshDoesNotMarkOldTrackFresh() {
         let oldDate = Date(timeIntervalSince1970: 111)
-        let existing = state(songId: "5", title: "Old title", artist: "Old artist", lastUpdate: oldDate, connectionAvailable: true)
+        let existing = state(title: "Old title", artist: "Old artist", songId: "5", lastUpdate: oldDate, connectionAvailable: true)
 
         let updated = RemoteIntentFeedbackBuilder.makeState(
             existing: existing,
@@ -311,6 +372,33 @@ final class SpyLiveActivityBackend: LiveActivityBackend {
     func endAll() async {
         endCount += 1
         active = false
+    }
+}
+
+/// 可手动推进的尾随调度器：用于验证 deadline 交付与 end 取消，无需真实等待。
+final class ManualTrailingFlushScheduler: TrailingFlushScheduling {
+    private(set) var scheduledAction: (@MainActor () -> Void)?
+    private(set) var scheduledDelay: TimeInterval?
+    private(set) var cancelCount = 0
+
+    final class Token: TrailingFlushToken {
+        var onCancel: (() -> Void)?
+        func cancel() { onCancel?() }
+    }
+
+    func schedule(after interval: TimeInterval, action: @escaping @MainActor () -> Void) -> TrailingFlushToken {
+        scheduledAction = action
+        scheduledDelay = interval
+        let token = Token()
+        token.onCancel = { [weak self] in self?.cancelCount += 1 }
+        return token
+    }
+
+    @MainActor
+    func fire() {
+        let pending = scheduledAction
+        scheduledAction = nil
+        pending?()
     }
 }
 #endif

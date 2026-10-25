@@ -94,4 +94,66 @@ final class LiveActivityModelTests: XCTestCase {
             XCTAssertFalse(label.lowercased().contains("host"))
         }
     }
+
+    // MARK: - F8：生产反馈的逐目标授权边界
+
+    private func makeSession() -> (RemoteIntentAuthorizedSessionStore, UUID) {
+        let store = RemoteIntentAuthorizedSessionStore()
+        let id = store.authorize(
+            baseURL: URL(string: "http://example.invalid/api/external")!,
+            token: "synthetic-token"
+        )
+        return (store, id)
+    }
+
+    func testFeedbackBoundaryRequiresCurrentSession() {
+        let (store, id) = makeSession()
+        XCTAssertTrue(ActivityFeedbackBoundary.shouldUpdate(
+            sessionId: id,
+            sessionIDInActivity: id.uuidString,
+            isSessionCurrent: store.isCurrent
+        ))
+
+        store.invalidate()
+        XCTAssertFalse(ActivityFeedbackBoundary.shouldUpdate(
+            sessionId: id,
+            sessionIDInActivity: id.uuidString,
+            isSessionCurrent: store.isCurrent
+        ), "失效会话不得反馈旧 Activity")
+    }
+
+    func testFeedbackBoundaryRejectsReplacementTarget() {
+        let store = RemoteIntentAuthorizedSessionStore()
+        let old = store.authorize(baseURL: URL(string: "http://example.invalid/a/api/external")!, token: "a")
+        let new = store.authorize(baseURL: URL(string: "http://example.invalid/b/api/external")!, token: "b")
+
+        XCTAssertFalse(ActivityFeedbackBoundary.shouldUpdate(
+            sessionId: old,
+            sessionIDInActivity: old.uuidString,
+            isSessionCurrent: store.isCurrent
+        ), "旧会话被替换后不得反馈")
+        XCTAssertTrue(ActivityFeedbackBoundary.shouldUpdate(
+            sessionId: new,
+            sessionIDInActivity: new.uuidString,
+            isSessionCurrent: store.isCurrent
+        ))
+    }
+
+    func testFeedbackBoundaryRevalidatesBetweenPerActivityUpdates() {
+        let (_, id) = makeSession()
+        var sessionCurrent = true
+        var updated = 0
+        // 模拟两个目标 Activity；第一次 update 的 await 期间会话失效。
+        for _ in 0..<2 {
+            if ActivityFeedbackBoundary.shouldUpdate(
+                sessionId: id,
+                sessionIDInActivity: id.uuidString,
+                isSessionCurrent: { _ in sessionCurrent }
+            ) {
+                updated += 1
+                sessionCurrent = false
+            }
+        }
+        XCTAssertEqual(updated, 1, "每个目标更新前都必须重新校验当前授权")
+    }
 }

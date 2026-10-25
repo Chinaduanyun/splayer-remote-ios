@@ -113,8 +113,10 @@ final class MockRemoteAPI: RemoteAPI {
 
     func fetchLanShareStatus() async throws -> LanShareStatus {
         lanShareStatusCallCount += 1
+        // 先快照结果再等待延迟：确定性验证「迟到旧响应不得覆盖新世代」。
+        let result = lanShareStatusResult
         if let lanShareStatusDelay { await lanShareStatusDelay() }
-        return try lanShareStatusResult.get()
+        return try result.get()
     }
 }
 
@@ -281,6 +283,12 @@ final class MockCollaborationSocket: CollaborationSocket {
         guard acceptSend, state == .open else { return false }
         sentTexts.append(text)
         return true
+    }
+
+    /// 模拟对端非预期关闭（通知状态变化，便于验证 teardown / 清理）。
+    func simulateRemoteClose() {
+        state = .closed
+        onStateChange?(.closed)
     }
 }
 

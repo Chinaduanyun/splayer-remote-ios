@@ -141,4 +141,46 @@ final class WebSocketTransportTests: XCTestCase {
             XCTAssertNotEqual(seen.last, .open, "closed 之后不得再投递 open：\(seen)")
         }
     }
+
+    // MARK: - F6：协作传输关闭 / 迟到回调
+
+    func testCollaborationTransportIgnoresLateOpenAfterClose() throws {
+        let url = try XCTUnwrap(URL(string: "ws://192.168.31.100:6688/api/lanShare/ws?token=synthetic"))
+        let transport = URLSessionCollaborationTransport(url: url, session: TestSession.make())
+        let task = transport.session.webSocketTask(with: url)
+        transport._installTask(task)
+
+        transport.delegate.onOpen?(task)
+        XCTAssertEqual(transport.state, .open)
+
+        // 对端非预期关闭：必须收敛为 closed。
+        transport.delegate.onClose?(task)
+        XCTAssertEqual(transport.state, .closed)
+
+        // 关闭后迟到的 open 不得重建通道。
+        transport.delegate.onOpen?(task)
+        XCTAssertEqual(transport.state, .closed, "关闭后的迟到 open 不得重建")
+
+        // stop 幂等。
+        transport.stop()
+        XCTAssertEqual(transport.state, .closed)
+    }
+
+    func testCollaborationTransportRejectsRedirect() throws {
+        let url = try XCTUnwrap(URL(string: "ws://192.168.31.100:6688/api/lanShare/ws?token=synthetic"))
+        let transport = URLSessionCollaborationTransport(url: url, session: TestSession.make())
+        var denied = 0
+        transport.delegate.onRedirectDenied = { denied += 1 }
+        let (session, task) = makeTask()
+        let response = HTTPURLResponse(url: baseURL, statusCode: 302, httpVersion: "HTTP/1.1", headerFields: nil)!
+        transport.delegate.urlSession(
+            session,
+            task: task,
+            willPerformHTTPRedirection: response,
+            newRequest: URLRequest(url: URL(string: "http://evil.example/steal")!)
+        ) { request in
+            XCTAssertNil(request)
+        }
+        XCTAssertEqual(denied, 1)
+    }
 }

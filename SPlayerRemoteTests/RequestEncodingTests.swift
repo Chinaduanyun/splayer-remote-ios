@@ -99,10 +99,18 @@ final class RequestEncodingTests: XCTestCase {
     }
 
     func testCollaborationWebSocketPercentEncodesToken() throws {
-        let request = try XCTUnwrap(APIRequestFactory.collaborationWebSocketRequest(baseURL: baseURL, wsToken: "a b&c=d/e"))
-        let urlString = request.url?.absoluteString ?? ""
-        XCTAssertFalse(urlString.contains("a b"))
-        XCTAssertTrue(urlString.contains("token=a%20b%26c%3Dd%2Fe"), "查询串 token 必须百分号编码：\(urlString)")
+        let original = "a b&c=d/e"
+        let request = try XCTUnwrap(APIRequestFactory.collaborationWebSocketRequest(baseURL: baseURL, wsToken: original))
+        let url = try XCTUnwrap(request.url)
+        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        let items = components.queryItems ?? []
+        // 解码后必须与原始 token 完全一致，且不得注入 role / 其它查询项。
+        XCTAssertEqual(items.count, 1, "只应存在一个 token 查询项：\(items)")
+        XCTAssertEqual(items.first(where: { $0.name == "token" })?.value, original)
+        XCTAssertFalse(items.contains(where: { $0.name == "role" }), "不得附带 role")
+        // 分隔符不能以原始形态破坏查询结构（允许 / 保持字面量）。
+        let raw = url.absoluteString
+        XCTAssertFalse(raw.contains("&c="), "& 必须编码，不能注入额外参数：\(raw)")
     }
 
     func testCollaborationWebSocketUsesWSSForHTTPS() throws {
