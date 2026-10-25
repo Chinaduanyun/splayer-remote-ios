@@ -73,20 +73,27 @@ enum RemoteIntentCommandExecutor {
             throw RemoteActivityCommandError.deliveryFailed
         }
 
-        // 命令已被确认；只在会话仍有效时刷新展示，绝不重试命令。
+        // 命令已提交（传输层）；只在会话仍有效时刷新展示，绝不重试命令。
         guard sessionStore.isCurrent(session.id) else { return }
 
         let status = try? await client.fetchStatus()
         let nowPlaying = try? await client.fetchNowPlaying()
+        // 播放数据成功即捕获权威时间戳 —— 必须先于可选的队列拉取，避免元数据延迟污染新鲜度。
+        // 仅当拿到 now-playing 身份时才认为“新鲜”：status-only 不得把旧曲目标为刚更新。
+        let authoritativeDate: Date? = (nowPlaying != nil) ? Date() : nil
+
+        // 刷新 await 之后**再次校验**会话身份：期间断开 / 替换 / 关闭实时活动都绝不反馈。
+        guard sessionStore.isCurrent(session.id) else { return }
+
         let queue = try? await client.fetchLanShareQueue()
+        guard sessionStore.isCurrent(session.id) else { return }
         let track = queue?.matchingTrack(songId: nowPlaying?.songId)
-        let authoritative = (status != nil || nowPlaying != nil)
         await feedback.apply(
             sessionId: session.id,
             status: status,
             nowPlaying: nowPlaying,
             track: track,
-            authoritativeDate: authoritative ? Date() : nil
+            authoritativeDate: authoritativeDate
         )
     }
 }
@@ -133,7 +140,8 @@ enum RemoteIntentFeedbackBuilder {
     }
 }
 
-/// 生产反馈：更新所有现存 Activity；绝不新建 Activity。
+/// 生产反馈：只更新**属于该授权会话**的 Activity；绝不新建 Activity。
+/// 会话替换后旧的 Activity 内容状态带有旧 sessionID，因此不会被旧刷新覆盖。
 struct ActivityIntentFeedback: RemoteIntentFeedbackApplying {
     func apply(
         sessionId: UUID,
@@ -142,7 +150,10 @@ struct ActivityIntentFeedback: RemoteIntentFeedbackApplying {
         track: LanShareTrack?,
         authoritativeDate: Date?
     ) async {
+        let identity = sessionId.uuidString
         for activity in Activity<RemoteActivityAttributes>.activities {
+            // 目标边界：只更新当前授权会话拥有的 Activity；不因它恰好存在就更新替换后的 Activity。
+            guard activity.contentState.sessionID == identity else { continue }
             let state = RemoteIntentFeedbackBuilder.makeState(
                 existing: activity.contentState,
                 status: status,

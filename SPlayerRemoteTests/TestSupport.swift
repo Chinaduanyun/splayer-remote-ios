@@ -29,6 +29,9 @@ final class MockRemoteAPI: RemoteAPI {
     var volumeResult: Result<Void, Error> = .success(())
     var lanShareQueueResult: Result<LanShareQueue?, Error> = .success(nil)
     var lanShareLyricResult: Result<LanShareLyricDocument?, Error> = .success(nil)
+    var lanShareStatusResult: Result<LanShareStatus, Error> = .success(
+        LanShareStatus(enabled: true, collabEnabled: false, collabAuthorized: false, wsToken: nil)
+    )
     /// 按调用顺序消费的队列 / 歌词结果；耗尽后回退到上面的单个结果。
     var lanShareQueueResults: [Result<LanShareQueue?, Error>] = []
     var lanShareLyricResults: [Result<LanShareLyricDocument?, Error>] = []
@@ -42,6 +45,7 @@ final class MockRemoteAPI: RemoteAPI {
     var volumeDelay: (() async -> Void)?
     var lanShareQueueDelay: (() async -> Void)?
     var lanShareLyricDelay: (() async -> Void)?
+    var lanShareStatusDelay: (() async -> Void)?
 
     private(set) var infoCallCount = 0
     private(set) var statusCallCount = 0
@@ -51,6 +55,7 @@ final class MockRemoteAPI: RemoteAPI {
     private(set) var setVolumes: [Double] = []
     private(set) var lanShareQueueCallCount = 0
     private(set) var lanShareLyricCallCount = 0
+    private(set) var lanShareStatusCallCount = 0
 
     func fetchInfo() async throws -> InfoResponse {
         infoCallCount += 1
@@ -104,6 +109,12 @@ final class MockRemoteAPI: RemoteAPI {
             return try lanShareLyricResults.removeFirst().get()
         }
         return try lanShareLyricResult.get()
+    }
+
+    func fetchLanShareStatus() async throws -> LanShareStatus {
+        lanShareStatusCallCount += 1
+        if let lanShareStatusDelay { await lanShareStatusDelay() }
+        return try lanShareStatusResult.get()
     }
 }
 
@@ -239,6 +250,63 @@ final class MockSocketFactory {
     }
 }
 
+/// 确定性 mock 协作通道：可注入发送结果、模拟打开 / 关闭，记录 URL 与文本帧。
+final class MockCollaborationSocket: CollaborationSocket {
+    private(set) var state: RemoteSocketState = .idle
+    var onStateChange: ((RemoteSocketState) -> Void)?
+
+    private(set) var sentTexts: [String] = []
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    var autoOpen = true
+    var acceptSend = true
+
+    func start() {
+        startCount += 1
+        state = .connecting
+        onStateChange?(.connecting)
+        if autoOpen {
+            state = .open
+            onStateChange?(.open)
+        }
+    }
+
+    func stop() {
+        stopCount += 1
+        state = .closed
+    }
+
+    @discardableResult
+    func send(text: String) -> Bool {
+        guard acceptSend, state == .open else { return false }
+        sentTexts.append(text)
+        return true
+    }
+}
+
+/// 记录创建的协作 socket 与请求 URL（仅内存，用于断言查询串 token 与单连接）。
+final class MockCollaborationSocketFactory {
+    private(set) var sockets: [MockCollaborationSocket] = []
+    private(set) var requestedURLs: [URL] = []
+    var autoOpen = true
+    var acceptSend = true
+    var configure: ((MockCollaborationSocket) -> Void)?
+
+    var latest: MockCollaborationSocket? { sockets.last }
+
+    func make() -> CollaborationSocketFactory {
+        { [weak self] url in
+            let socket = MockCollaborationSocket()
+            socket.autoOpen = self?.autoOpen ?? true
+            socket.acceptSend = self?.acceptSend ?? true
+            self?.requestedURLs.append(url)
+            self?.configure?(socket)
+            self?.sockets.append(socket)
+            return socket
+        }
+    }
+}
+
 /// 可控单调时钟，用于确定性验证平滑进度。
 final class TestMonotonicClock {
     var now: TimeInterval
@@ -319,6 +387,22 @@ enum LanShareFixtures {
                 "input": ["content": "<tt>...</tt>", "translation": ""],
             ],
         ]
+        return try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+    }
+
+    /// 合成 getStatus 响应。
+    static func statusJSON(
+        enabled: Bool = true,
+        collabEnabled: Bool = true,
+        collabAuthorized: Bool = true,
+        wsToken: String? = "synthetic-ws-token"
+    ) -> Data {
+        var payload: [String: Any] = [
+            "enabled": enabled,
+            "collabEnabled": collabEnabled,
+            "collabAuthorized": collabAuthorized,
+        ]
+        if let wsToken { payload["wsToken"] = wsToken }
         return try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
     }
 

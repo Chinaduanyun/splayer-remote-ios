@@ -18,6 +18,9 @@ struct RemoteActivityAttributes: ActivityAttributes {
         var isBuffering: Bool
         var lastUpdate: Date
         var connectionAvailable: Bool
+        /// 不透明的随机会话标识（**不是**凭据）：用于让命令反馈只更新属于当前授权会话的
+        /// Activity，绝不包含主机 / Token / URL。默认空串以兼容旧内容。
+        var sessionID: String = ""
     }
 
     /// 静态属性：仅一个展示用途的名称。

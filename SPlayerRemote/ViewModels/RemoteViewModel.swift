@@ -42,6 +42,27 @@ final class RemoteViewModel: ObservableObject {
         }
     }
 
+    /// 协作控制通道状态（与只读的外部实时 WS **相互独立**）。
+    enum CollaborationState: Equatable {
+        case disabled
+        case unauthorized
+        case connecting
+        case live
+        case unavailable
+
+        var displayName: String {
+            switch self {
+            case .disabled: return "未启用"
+            case .unauthorized: return "未授权"
+            case .connecting: return "连接中"
+            case .live: return "可控"
+            case .unavailable: return "不可用"
+            }
+        }
+
+        var canSendCommands: Bool { self == .live }
+    }
+
     /// 场景阶段：区分 `.inactive`（控制中心 / 切换器过渡）与真正的 `.background`。
     /// `.inactive` 尽力保留健康的会话；只有 `.background` 才暂停长时间网络工作。
     enum ScenePhaseState: Equatable {
@@ -92,6 +113,17 @@ final class RemoteViewModel: ObservableObject {
     /// 最近一次元数据错误（仅面向用户的简短文案，不含原始响应）。
     @Published private(set) var metadataError: String?
 
+    // MARK: - 协作控制（授权后才可点播；与只读元数据解耦）
+
+    /// `/api/lanShare/getStatus` 的最近结果；仅在授权条件下包含内存级 wsToken。
+    @Published private(set) var collaborationStatus: LanShareStatus?
+    /// 协作通道状态；仅 `.live` 时允许从队列点播。
+    @Published private(set) var collaborationState: CollaborationState = .disabled
+    /// 队列点播的待确认状态；仅用于本地提示，绝不重发命令。
+    @Published private(set) var pendingPlayback: CollaborationPendingPlayback?
+    /// 面向用户的协作提示（不含 token / URL）。
+    @Published private(set) var collaborationMessage: String?
+
     /// 滑杆草稿；为 nil 时表示跟随远端轮询值。
     @Published var volumeDraft: Double?
     @Published var seekDraft: Double?
@@ -100,9 +132,10 @@ final class RemoteViewModel: ObservableObject {
     /// 本地记忆的「取消静音」音量；**不是**手机系统音量。
     @Published private(set) var rememberedVolume: Double = 0.5
 
-    let settings: SettingsStore
+    private let settings: SettingsStore
     private let clientFactory: (URL, String) -> RemoteAPI
     private let socketFactory: RemoteSocketFactory?
+    private let collaborationSocketFactory: CollaborationSocketFactory?
     private var client: RemoteAPI?
     private var socket: RemoteSocket?
     private var pollTask: Task<Void, Never>?
@@ -135,6 +168,12 @@ final class RemoteViewModel: ObservableObject {
     private let intentSessionStore: RemoteIntentAuthorizedSessionStore?
     /// 场景是否不处于后台（`.active` 与 `.inactive` 均视为前台）。
     private var isSceneActive: Bool { scenePhase != .background }
+
+    private var isCollaborationStatusInFlight = false
+    private var collaborationSocket: CollaborationSocket?
+    private var collaborationSocketGeneration = 0
+    private var pendingPlaybackTask: Task<Void, Never>?
+    private let collaborationTimeoutNanoseconds: UInt64
 
     /// 本次连接的不可变配置：REST + WS 重试共用，绝不读取编辑中的设置。
     private var activeConfiguration: ConnectionConfiguration?
@@ -176,9 +215,11 @@ final class RemoteViewModel: ObservableObject {
         },
         pollIntervalNanoseconds: UInt64 = 2_000_000_000,
         socketFactory: RemoteSocketFactory? = nil,
+        collaborationSocketFactory: CollaborationSocketFactory? = nil,
         wsPollIntervalNanoseconds: UInt64 = 5_000_000_000,
         reconnectDelays: [UInt64] = [1_000_000_000, 2_000_000_000, 4_000_000_000, 8_000_000_000],
         metadataRetryInterval: TimeInterval = 15,
+        collaborationTimeoutNanoseconds: UInt64 = 12_000_000_000,
         liveActivity: LiveActivityPresenting? = nil,
         intentSessionStore: RemoteIntentAuthorizedSessionStore? = nil,
         monotonicNow: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
@@ -188,9 +229,11 @@ final class RemoteViewModel: ObservableObject {
         self.clientFactory = clientFactory
         self.pollIntervalNanoseconds = pollIntervalNanoseconds
         self.socketFactory = socketFactory
+        self.collaborationSocketFactory = collaborationSocketFactory
         self.wsPollIntervalNanoseconds = wsPollIntervalNanoseconds
         self.reconnectDelays = reconnectDelays.isEmpty ? [1_000_000_000] : reconnectDelays
         self.metadataRetryInterval = metadataRetryInterval
+        self.collaborationTimeoutNanoseconds = collaborationTimeoutNanoseconds
         self.liveActivity = liveActivity
         self.intentSessionStore = intentSessionStore
         self.monotonicNow = monotonicNow
@@ -207,6 +250,33 @@ final class RemoteViewModel: ObservableObject {
 
     /// 仅在已知有效时长时允许跳转。
     var canSeek: Bool { canControl && currentDurationMs > 0 }
+
+    /// 仅在「可控制 + 协作通道可控 + 队列可用」时才允许从队列点播。
+    /// 与 HTTP 控制共享 `canControl` 互斥，避免同时提交两条命令。
+    var canSelectFromQueue: Bool {
+        canControl
+            && collaborationState == .live
+            && metadataState == .available
+            && !(queue?.tracks.isEmpty ?? true)
+    }
+
+    /// 队列只读时的说明文案；可控时为 nil。
+    var queueReadOnlyHint: String? {
+        guard metadataState == .available, queue != nil else { return nil }
+        if canSelectFromQueue { return nil }
+        switch collaborationState {
+        case .live:
+            return canControl ? "可点播当前队列中的曲目。" : "数据过期或场景不可用，暂时无法点播。"
+        case .connecting:
+            return "正在建立协作通道，稍后可点播当前队列。"
+        case .unauthorized:
+            return "当前设备未获得主机的协作授权，队列为只读浏览。可在设置中重试授权。"
+        case .disabled:
+            return "主机未开启局域网协作，队列为只读浏览。"
+        case .unavailable:
+            return "协作通道不可用，队列为只读浏览；可重试授权。"
+        }
+    }
 
     /// 当前用于 UI 显示的播放状态。
     var playbackState: PlaybackState {
@@ -299,6 +369,7 @@ final class RemoteViewModel: ObservableObject {
         trackedSongId = nil
         progressAnchor = nil
         resetMetadata()
+        resetCollaboration()
 
         do {
             // info 与 status 都必须成功，才认为连接“好”。
@@ -340,6 +411,8 @@ final class RemoteViewModel: ObservableObject {
             recomputeCurrentTrack()
             refreshMetadata(force: true)
             notifyLiveActivity()
+            // 授权判定只在同一次连接的主机 + 凭据上进行；未授权时队列保持只读。
+            Task { @MainActor [weak self] in await self?.refreshCollaborationStatus() }
         } catch {
             guard gen == generation, !Task.isCancelled else { return }
             client = nil
@@ -347,6 +420,7 @@ final class RemoteViewModel: ObservableObject {
             lastError = message(for: error)
             invalidateIntentSession()
             if isAuthenticationFailure(error) { authenticationFailureLatched = true }
+            resetCollaboration()
             liveActivity?.end()
         }
     }
@@ -375,6 +449,7 @@ final class RemoteViewModel: ObservableObject {
         teardownSocket()
         invalidateCommand()
         invalidateIntentSession()
+        resetCollaboration()
         client = nil
         activeConfiguration = nil
         reconnectAttempt = 0
@@ -447,6 +522,9 @@ final class RemoteViewModel: ObservableObject {
         stopPolling()
         teardownSocket()
         invalidateCommand()
+        teardownCollaborationSocket()
+        invalidatePendingPlayback()
+        collaborationState = .disabled
         isStale = true
         volumeDraft = nil
         if isAdjustingSeek { seekDraftInvalidated = true }
@@ -470,6 +548,8 @@ final class RemoteViewModel: ObservableObject {
         startPolling()
         startSocketIfNeeded()
         ensureIntentSessionAuthorized()
+        // 回前台重新确认协作授权（不可用时队列保持只读）。
+        Task { @MainActor [weak self] in await self?.refreshCollaborationStatus() }
         // 后台中断的元数据请求在回前台后恢复（不依赖下一次 track 变化）。
         refreshMetadata(force: true)
         // 立即刷新一次 HTTP（不先睡眠 2/5 秒）；世代 / 前台门控保证安全。
@@ -584,6 +664,7 @@ final class RemoteViewModel: ObservableObject {
                 invalidateSeekDragIfNeeded(newSongId: songId)
                 handleMetadataTrackChange()
             }
+            confirmPendingPlayback(songId: songId)
         }
 
         if let volume = payload.volume, volume.isFinite {
@@ -727,6 +808,7 @@ final class RemoteViewModel: ObservableObject {
             lastSuccessfulRestUpdate = now
             updateProgressAnchor(authoritativePosition: rawPositionMs)
             notifyLiveActivity()
+            confirmPendingPlayback(songId: freshNow.songId)
             scheduleMetadataCalibrationIfNeeded()
         } catch {
             guard gen == generation, isSceneActive, !Task.isCancelled else { return }
@@ -1102,6 +1184,160 @@ final class RemoteViewModel: ObservableObject {
         lastMetadataAttempt = nil
     }
 
+    // MARK: - 协作控制（授权后才可点播）
+
+    /// 拉取 `/api/lanShare/getStatus` 并根据授权结果建立 / 关闭协作通道。
+    /// 只使用**同一次连接捕获的**主机 + 凭据；绝不借用电脑授权，也不自造授权。
+    func refreshCollaborationStatus() async {
+        guard isSceneActive, connection.isConnected, client != nil,
+              let configuration = activeConfiguration else { return }
+        if isCollaborationStatusInFlight { return }
+        isCollaborationStatusInFlight = true
+        defer { isCollaborationStatusInFlight = false }
+        guard let client else { return }
+        do {
+            let status = try await client.fetchLanShareStatus()
+            // 连接可能已在 await 期间被替换 / 断开：丢弃过期结果。
+            guard isSceneActive, connection.isConnected,
+                  configuration.baseURL == activeConfiguration?.baseURL else { return }
+            collaborationStatus = status
+            if status.canCollaborate {
+                startCollaborationSocket()
+            } else {
+                teardownCollaborationSocket()
+                collaborationState = (status.enabled && status.collabEnabled) ? .unauthorized : .disabled
+            }
+        } catch {
+            guard isSceneActive, connection.isConnected else { return }
+            teardownCollaborationSocket()
+            collaborationState = .unavailable
+            collaborationMessage = "无法获取协作授权状态，元数据仍可浏览。"
+        }
+    }
+
+    /// 手动重试授权（设置 / 诊断 / 队列面板）。
+    func retryCollaborationAuthorization() {
+        guard connection.isConnected, client != nil else { return }
+        Task { @MainActor [weak self] in await self?.refreshCollaborationStatus() }
+    }
+
+    /// 从队列点播：仅当协作通道可控时可用。
+    /// 校验「行身份 + 下标 + 当前队列 revision」；发送后只记录待确认，绝不重发。
+    func playQueueItem(trackId: String, index: Int) {
+        guard canSelectFromQueue, let queue else { return }
+        guard index >= 0, index < queue.tracks.count else {
+            collaborationMessage = "该曲目已不在当前队列中。"
+            return
+        }
+        // 当前队列必须仍把该下标映射到同一 id，避免过期快照误播其它曲目。
+        guard queue.tracks[index].id == trackId else {
+            collaborationMessage = "队列已更新，请刷新后重试。"
+            return
+        }
+        guard let socket = collaborationSocket, socket.state == .open else {
+            collaborationMessage = "协作通道尚未就绪，请稍后重试。"
+            return
+        }
+        let timestamp = Int(dateProvider().timeIntervalSince1970 * 1000)
+        guard let body = CollaborationCommand.playAt(index: index, timestampMs: timestamp),
+              let text = String(data: body, encoding: .utf8) else { return }
+        guard socket.send(text: text) else {
+            collaborationMessage = "协作通道暂时不可用，请重试。"
+            return
+        }
+        pendingPlayback = CollaborationPendingPlayback(
+            trackId: trackId,
+            index: index,
+            revision: queue.revision,
+            sentAt: dateProvider()
+        )
+        collaborationMessage = nil
+        beginPendingPlaybackTimeout()
+    }
+
+    private func startCollaborationSocket() {
+        guard let configuration = activeConfiguration,
+              let token = collaborationStatus?.wsToken, !token.isEmpty else { return }
+        guard let factory = collaborationSocketFactory else {
+            collaborationState = .unavailable
+            return
+        }
+        if let existing = collaborationSocket, existing.state == .open || existing.state == .connecting {
+            return
+        }
+        teardownCollaborationSocket()
+        collaborationSocketGeneration += 1
+        let gen = collaborationSocketGeneration
+        guard let url = APIRequestFactory.collaborationWebSocketRequest(baseURL: configuration.baseURL, wsToken: token)?.url else {
+            collaborationState = .unavailable
+            return
+        }
+        let socket = factory(url)
+        socket.onStateChange = { [weak self] state in
+            Task { @MainActor in self?.handleCollaborationState(state, generation: gen) }
+        }
+        collaborationSocket = socket
+        collaborationState = .connecting
+        socket.start()
+    }
+
+    private func handleCollaborationState(_ state: RemoteSocketState, generation gen: Int) {
+        guard gen == collaborationSocketGeneration, isSceneActive, connection.isConnected else { return }
+        switch state {
+        case .open:
+            collaborationState = .live
+        case .closed:
+            collaborationSocket = nil
+            collaborationState = (collaborationStatus?.canCollaborate == true) ? .unavailable : .disabled
+        case .idle, .connecting:
+            break
+        }
+    }
+
+    private func teardownCollaborationSocket() {
+        collaborationSocketGeneration += 1
+        collaborationSocket?.onStateChange = nil
+        collaborationSocket?.stop()
+        collaborationSocket = nil
+    }
+
+    /// 断开 / 后台 / 连接替换：关闭协作通道并作废待确认（**绝不重放命令**）。
+    private func resetCollaboration() {
+        teardownCollaborationSocket()
+        invalidatePendingPlayback()
+        collaborationStatus = nil
+        collaborationState = .disabled
+        collaborationMessage = nil
+    }
+
+    private func beginPendingPlaybackTimeout() {
+        pendingPlaybackTask?.cancel()
+        let timeout = collaborationTimeoutNanoseconds
+        pendingPlaybackTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: timeout)
+            guard let self, !Task.isCancelled else { return }
+            guard self.pendingPlayback != nil else { return }
+            self.pendingPlayback = nil
+            self.collaborationMessage = "未在限定时间内确认切歌结果，请查看当前播放状态。"
+        }
+    }
+
+    /// 仅在权威 now-playing 身份命中期望曲目时清除待确认；绝不重发。
+    private func confirmPendingPlayback(songId: Int?) {
+        guard let pending = pendingPlayback else { return }
+        guard let songId, String(songId) == pending.trackId else { return }
+        pendingPlayback = nil
+        collaborationMessage = nil
+        pendingPlaybackTask?.cancel()
+        pendingPlaybackTask = nil
+    }
+
+    private func invalidatePendingPlayback() {
+        pendingPlaybackTask?.cancel()
+        pendingPlaybackTask = nil
+        pendingPlayback = nil
+    }
+
     /// 通知 Live Activity；去重 / 限频由 presenter 负责。
     private func notifyLiveActivity() {
         guard let liveActivity else { return }
@@ -1113,7 +1349,9 @@ final class RemoteViewModel: ObservableObject {
             isBuffering: isBuffering,
             connectionAvailable: connection.isConnected && !isStale,
             // 只使用最近一次权威播放成功时间；绝不因通知 / 失败尝试伪造新鲜度。
-            timestamp: lastSuccessfulUpdate ?? Date.distantPast
+            timestamp: lastSuccessfulUpdate ?? Date.distantPast,
+            // 不透明随机会话标识（非凭据）：让命令反馈只命中当前授权会话的 Activity。
+            sessionID: intentSessionStore?.current()?.id.uuidString ?? ""
         )
         liveActivity.startOrUpdate(snapshot)
     }

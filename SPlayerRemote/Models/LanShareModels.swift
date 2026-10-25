@@ -22,6 +22,8 @@ enum LanShareLimits {
     /// 局域网元数据响应体字节上限（流式读取，超限即停止）。
     static let maxQueueResponseBytes = 1_000_000
     static let maxLyricResponseBytes = 512_000
+    /// `/api/lanShare/getStatus` 响应体很小；超过即可疑。
+    static let maxStatusResponseBytes = 64_000
 }
 
 /// 对来自对端的原始值做类型容错与长度裁剪。
@@ -233,6 +235,66 @@ struct LanShareLyricDocument: Equatable {
         let translation = LanShareSanitizer.text(input?["translation"], limit: maxChars) ?? ""
         let lines = LRCParser.parse(content: content, translation: translation)
         return LanShareLyricDocument(revision: revision, source: source, lines: lines, isSupported: true)
+    }
+}
+
+/// `/api/lanShare/getStatus` 的只读结果。
+///
+/// ⚠️ `wsToken` 只在**当前设备被主机授权**时返回；它仅用于建立协作控制 WS 的查询参数，
+/// 属于内存级凭据：绝不持久化、绝不写入日志 / Activity 内容 / 错误文案。
+/// `collabAuthorized` 由主机端根据设备 IP 判定；本 App 绝不自造授权，也不借用电脑的授权。
+struct LanShareStatus: Equatable {
+    let enabled: Bool
+    let collabEnabled: Bool
+    let collabAuthorized: Bool
+    let wsToken: String?
+
+    /// 是否具备建立协作通道的全部条件：开启分享 + 开启协作 + 已授权 + 有非空 wsToken。
+    var canCollaborate: Bool {
+        enabled && collabEnabled && collabAuthorized && !(wsToken ?? "").isEmpty
+    }
+
+    /// 容错解析：缺失字段一律视为 false / nil，绝不用默认值冒充授权。
+    static func decode(from data: Data) throws -> LanShareStatus {
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let root = object as? [String: Any] else {
+            throw RemoteAPIError.decoding
+        }
+        return LanShareStatus(
+            enabled: (root["enabled"] as? Bool) ?? false,
+            collabEnabled: (root["collabEnabled"] as? Bool) ?? false,
+            collabAuthorized: (root["collabAuthorized"] as? Bool) ?? false,
+            wsToken: LanShareSanitizer.text(root["wsToken"], limit: LanShareLimits.identifier)
+        )
+    }
+}
+
+/// 一次队列点播的**待确认**状态。
+///
+/// 服务端没有可靠 ack：`send` 完成只代表传输层已投递，绝不代表已播放。
+/// 本 App 只在之后通过权威 `/api/external/now-playing` 的 songId 校验结果，
+/// 绝不重复发送命令、绝不在断线重连后重放。
+struct CollaborationPendingPlayback: Equatable {
+    let trackId: String
+    let index: Int
+    let revision: Int
+    let sentAt: Date
+}
+
+/// 协作控制 WS 上送的命令信封。
+/// 当前只使用 `playAt`（0 基下标）；其余动作不在本 App 暴露，保持“有限的当前队列”语义。
+enum CollaborationCommand {
+    /// 编码 `{type:"command",action:"playAt",value:<zeroBasedIndex>,ts:<milliseconds>}`。
+    /// 非法下标（负数 / 非有限）返回 nil，调用方必须拒绝。
+    static func playAt(index: Int, timestampMs: Int) -> Data? {
+        guard index >= 0, timestampMs >= 0 else { return nil }
+        let payload: [String: Any] = [
+            "type": "command",
+            "action": "playAt",
+            "value": index,
+            "ts": timestampMs,
+        ]
+        return try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
     }
 }
 

@@ -12,6 +12,7 @@ build/
 IMPLEMENTATION.md
 UPGRADE-PLAN.md
 V12-PLAN.md
+V13-PLAN.md
 reference/
 .pi/
 *.xcresult/

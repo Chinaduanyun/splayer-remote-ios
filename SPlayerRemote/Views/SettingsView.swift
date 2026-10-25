@@ -19,6 +19,7 @@ struct SettingsView: View {
 
     @State private var validationMessage: String?
     @State private var isWorking = false
+    @State private var showDiagnostics = false
 
     var body: some View {
         NavigationStack {
@@ -107,13 +108,63 @@ struct SettingsView: View {
                 } header: {
                     Text("安全说明")
                 }
+
+                Section {
+                    Label("协作点播使用经过批准的查询串 token（仅存在于内存中），绝不记录到日志。", systemImage: "key.horizontal")
+                        .font(.footnote)
+                    Label("队列点播只影响主机**当前队列**；不提供歌单 / 收藏 / 搜索等未验证接口。", systemImage: "list.bullet.rectangle")
+                        .font(.footnote)
+                    Label("发送后只等待权威播放状态确认，不会重复发送命令。", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.footnote)
+                    Button {
+                        remote.retryCollaborationAuthorization()
+                    } label: {
+                        Label("重试协作授权", systemImage: "arrow.clockwise")
+                            .frame(minHeight: 44)
+                    }
+                    .disabled(!remote.connection.isConnected)
+                } header: {
+                    Text("协作控制（当前队列）")
+                }
+
+                Section {
+                    Label("在系统设置 → 通知 中允许本 App 的通知与实时活动。", systemImage: "bell.badge")
+                        .font(.footnote)
+                    Label("灵动岛仅在支持灵动岛的 iPhone 机型上显示；其它机型只会看到锁屏实时活动。", systemImage: "iphone.gen3")
+                        .font(.footnote)
+                    Label("若看不到灵动岛：长按灵动岛 / 锁屏活动可展开详情；必要时删除 App 后重装以刷新内嵌的实时活动扩展。", systemImage: "arrow.clockwise.circle")
+                        .font(.footnote)
+                    Label("实时活动依赖系统调度，不保证持续后台联网；离开 App 后状态可能延迟。", systemImage: "clock.arrow.circlepath")
+                        .font(.footnote)
+                } header: {
+                    Text("灵动岛 / 实时活动支持")
+                }
             }
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("v\(Self.appVersion)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityLabel("版本 \(Self.appVersion)")
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showDiagnostics = true
+                    } label: {
+                        Image(systemName: "waveform.path.ecg")
+                    }
+                    .accessibilityLabel("诊断")
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") { dismiss() }
                 }
+            }
+            .sheet(isPresented: $showDiagnostics) {
+                DiagnosticsView()
             }
             .onAppear(perform: loadDraftsIfNeeded)
         }
@@ -163,5 +214,11 @@ struct SettingsView: View {
         } catch {
             validationMessage = remote.message(for: error)
         }
+    }
+
+    static var appVersion: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        return "\(short) (\(build))"
     }
 }

@@ -12,6 +12,8 @@ protocol RemoteAPI {
     func fetchLanShareQueue() async throws -> LanShareQueue?
     /// 局域网分享歌词（只读，可选元数据）。`nil` 表示服务端尚未就绪（`ok:false`）。
     func fetchLanShareLyric() async throws -> LanShareLyricDocument?
+    /// `/api/lanShare/getStatus`：协作授权与（可选）wsToken。
+    func fetchLanShareStatus() async throws -> LanShareStatus
 }
 
 /// 基于 URLSession 的 SPlayer 外部 API 客户端。
@@ -99,6 +101,14 @@ final class RemoteAPIClient: RemoteAPI {
         }
         let data = try await performBounded(request, maxBytes: LanShareLimits.maxLyricResponseBytes)
         return try LanShareLyricDocument.decode(from: data)
+    }
+
+    func fetchLanShareStatus() async throws -> LanShareStatus {
+        guard let request = APIRequestFactory.lanShareRequest(baseURL: baseURL, endpoint: "getStatus", token: token) else {
+            throw RemoteAPIError.invalidConfiguration("无法构造局域网分享请求。")
+        }
+        let data = try await performBounded(request, maxBytes: LanShareLimits.maxStatusResponseBytes)
+        return try LanShareStatus.decode(from: data)
     }
 
     // MARK: - 内部

@@ -59,6 +59,12 @@
 			path = "SPlayerRemote/Networking/WebSocketTransport.swift";
 			sourceTree = "<group>";
 		};
+		884B7F4F4FA5C3BB6C7DCC6C = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemote/Networking/CollaborationTransport.swift";
+			sourceTree = "<group>";
+		};
 		F0389D2D700A612DBE6BC21B = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -245,6 +251,12 @@
 			path = "SPlayerRemoteTests/IntentExecutionTests.swift";
 			sourceTree = "<group>";
 		};
+		2DF2C716F2DFF3975D256A3F = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemoteTests/CollaborationTests.swift";
+			sourceTree = "<group>";
+		};
 		6316458738A4F146D22011C9 = {
 			isa = PBXFileReference;
 			lastKnownFileType = folder.assetcatalog;
@@ -319,6 +331,10 @@
 		F59E4F86284EC48479F1AF83 = {
 			isa = PBXBuildFile;
 			fileRef = 965DBC1833D682850E4B3714 /* WebSocketTransport.swift */;
+		};
+		FF5C5CA4021E4D4EEF0F70E3 = {
+			isa = PBXBuildFile;
+			fileRef = 884B7F4F4FA5C3BB6C7DCC6C /* CollaborationTransport.swift */;
 		};
 		A13B8B76E49F50B1D44F88D0 = {
 			isa = PBXBuildFile;
@@ -440,6 +456,10 @@
 			isa = PBXBuildFile;
 			fileRef = 96B4BFAD9D18A0F58894DDC4 /* IntentExecutionTests.swift */;
 		};
+		6EF57E6F8DEF155B94791CDB = {
+			isa = PBXBuildFile;
+			fileRef = 2DF2C716F2DFF3975D256A3F /* CollaborationTests.swift */;
+		};
 		44009BEAAB1A2C74C30569A1 = {
 			isa = PBXBuildFile;
 			fileRef = D89EEF9759B475E4EF3CF5A7 /* SPlayerRemoteLiveActivityBundle.swift */;
@@ -473,6 +493,7 @@
 				310788BC488B8A2BE1C7A402,
 				6461D2940EAF8890CFBFE049,
 				965DBC1833D682850E4B3714,
+				884B7F4F4FA5C3BB6C7DCC6C,
 				F0389D2D700A612DBE6BC21B,
 				A9E632176E540DF79606D63A,
 				4B88196A8F529D211998B1AA,
@@ -528,6 +549,7 @@
 				6DB9B8CE0D68D7B05119CC3B,
 				EEE5AA0C9AD2120645B9C49C,
 				96B4BFAD9D18A0F58894DDC4,
+				2DF2C716F2DFF3975D256A3F,
 			);
 			name = "SPlayerRemoteTests";
 			sourceTree = "<group>";
@@ -566,6 +588,7 @@
 				C8F0251B9B82FA5DCEDAD139 /* APIRequestFactory.swift */,
 				AEC64A11FB20C67539E78B81 /* RemoteAPIClient.swift */,
 				F59E4F86284EC48479F1AF83 /* WebSocketTransport.swift */,
+				FF5C5CA4021E4D4EEF0F70E3 /* CollaborationTransport.swift */,
 				A13B8B76E49F50B1D44F88D0 /* CoverImageLoader.swift */,
 				F3B74E363D27F3C57893F495 /* KeychainStore.swift */,
 				CD226F39918AA813B205B8FF /* SettingsStore.swift */,
@@ -617,6 +640,7 @@
 				6540EF45B47B741C48B6E68E /* LiveActivityModelTests.swift */,
 				0A03D9E0CF79A52017A21576 /* LiveActivityControllerTests.swift */,
 				F811DD83A3C5F3E70DECE9CE /* IntentExecutionTests.swift */,
+				6EF57E6F8DEF155B94791CDB /* CollaborationTests.swift */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -851,13 +875,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "SPlayerRemote/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -874,13 +898,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "SPlayerRemote/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -896,10 +920,10 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote.tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -915,10 +939,10 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote.tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -934,12 +958,12 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "SPlayerRemoteLiveActivity/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks");
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote.liveactivity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -955,12 +979,12 @@
 			buildSettings = {
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "SPlayerRemoteLiveActivity/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks");
-				MARKETING_VERSION = 1.2;
+				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote.liveactivity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

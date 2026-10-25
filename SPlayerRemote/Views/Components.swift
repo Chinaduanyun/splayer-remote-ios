@@ -53,25 +53,58 @@ struct ConnectionBadge: View {
     }
 }
 
-// MARK: - 播放状态 + 元数据面板
+// MARK: - 正在播放主面板
 
-struct PlaybackStatusPanel: View {
+/// 「正在播放」主屏：大封面 + 标题 / 艺人 + 单一进度条 + 大控制簇。
+///
+/// 设计约定（v1.3 重排）：
+/// - 不再重复解释元数据、不再使用巨大的状态标题；
+/// - 只保留**一个进度滑杆**；音量只在右侧扬声器按钮的 popover 中出现；
+/// - 点播待确认 / 协作状态只以一行克制的副文案呈现，不遮挡控制；
+/// - 所有命中区 ≥44pt，支持动态字体与 VoiceOver。
+struct NowPlayingScreen: View {
     @EnvironmentObject private var remote: RemoteViewModel
     @State private var showsVolume = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .firstTextBaseline) {
+        VStack(spacing: 18) {
+            ArtworkHeroView(url: remote.currentTrack?.coverURL)
+
+            VStack(spacing: 6) {
+                Text(titleText)
+                    .font(.title3.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+                Text(subtitleText)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if let tertiary = tertiaryText {
+                    Text(tertiary)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            // 紧凑状态行：播放状态 + 音量 popover 按钮。
+            HStack(spacing: 10) {
                 Text(remote.playbackState.displayName)
-                    .font(.largeTitle.bold())
-                    .foregroundStyle(.primary)
-                Spacer()
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if remote.isBuffering {
+                    ProgressView().controlSize(.mini)
+                }
+                Spacer(minLength: 0)
                 Button {
                     showsVolume.toggle()
                 } label: {
-                    Image(systemName: "speaker.wave.2.fill")
+                    Image(systemName: remote.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
                         .font(.title3)
                         .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("调节播放音量")
@@ -88,11 +121,48 @@ struct PlaybackStatusPanel: View {
 
             ProgressSection()
 
-            NowPlayingMetadataSection()
+            TransportCluster()
+
+            if let notice = collaborationNotice {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel("提示：\(notice)")
+            }
         }
         .padding(22)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .glassPanel()
+    }
+
+    private var titleText: String {
+        if let title = remote.currentTrack?.title { return title }
+        if let id = remote.songId { return "曲目 #\(id)" }
+        return "尚未获取曲目"
+    }
+
+    private var subtitleText: String {
+        if let artist = remote.currentTrack?.artistLine { return artist }
+        if let id = remote.songId { return "歌曲标识 #\(id)" }
+        return "等待播放数据"
+    }
+
+    /// 克制的来源 / 专辑副标题；缺失时不编造。
+    private var tertiaryText: String? {
+        guard let track = remote.currentTrack else { return nil }
+        var parts: [String] = []
+        if let album = track.album?.name, !album.isEmpty { parts.append(album) }
+        if let source = track.source, !source.isEmpty { parts.append(source.uppercased()) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private var collaborationNotice: String? {
+        if let pending = remote.pendingPlayback {
+            return "切歌确认中：#\(pending.trackId)（待权威状态确认）"
+        }
+        return remote.collaborationMessage
     }
 }
 
@@ -144,13 +214,12 @@ private struct ProgressSection: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
-
         }
     }
 }
 
 /// 音量：仅保留滑杆 + 百分比，控制的是 **Android 端播放音量**，不是手机系统音量。
-/// 仅松手时上报一次，绝不自动重试。（静音 / 步进 / 预设快捷按钮已按 V1.2 需求移除。）
+/// 仅松手时上报一次，绝不自动重试。只在扬声器按钮的 popover 中呈现。
 private struct VolumeSection: View {
     @EnvironmentObject private var remote: RemoteViewModel
 
@@ -187,16 +256,18 @@ private struct VolumeSection: View {
     }
 }
 
-/// 音量快捷按钮已按 V1.2 需求移除（静音 / ±5% / 25-100 预设）。
+// MARK: - 交通控制簇
 
-// MARK: - 交通控制面板
-
+/// 大号控制簇：上一曲 / 播放暂停 / 下一曲；停止等次要操作收入菜单。
 struct TransportCluster: View {
     @EnvironmentObject private var remote: RemoteViewModel
 
     var body: some View {
-        VStack(spacing: 12) {
-            // 主控制：更大的播放 / 暂停按钮。
+        HStack(spacing: 16) {
+            GlassTransportButton(systemImage: "backward.fill", label: "上一曲", enabled: remote.canControl) {
+                remote.send(.prev)
+            }
+
             GlassTransportButton(
                 systemImage: remote.playbackState.isPlaying ? "pause.fill" : "play.fill",
                 label: remote.playbackState.isPlaying ? "暂停" : "播放",
@@ -207,22 +278,27 @@ struct TransportCluster: View {
                 remote.send(remote.playbackState.isPlaying ? .pause : .play)
             }
 
-            // 次级控制：上一曲 / 停止 / 下一曲分组。
-            HStack(spacing: 18) {
-                GlassTransportButton(systemImage: "backward.fill", label: "上一曲", enabled: remote.canControl) {
-                    remote.send(.prev)
-                }
-                GlassTransportButton(systemImage: "stop.fill", label: "停止", enabled: remote.canControl) {
-                    remote.send(.stop)
-                }
-                GlassTransportButton(systemImage: "forward.fill", label: "下一曲", enabled: remote.canControl) {
-                    remote.send(.next)
-                }
+            GlassTransportButton(systemImage: "forward.fill", label: "下一曲", enabled: remote.canControl) {
+                remote.send(.next)
             }
+
+            Menu {
+                Button {
+                    remote.send(.stop)
+                } label: {
+                    Label("停止", systemImage: "stop.fill")
+                }
+                .disabled(!remote.canControl)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 20, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("更多控制")
         }
-        .padding(.vertical, 16)
-        .padding(.horizontal, 18)
-        .glassPanel(cornerRadius: 32)
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .contain)
     }

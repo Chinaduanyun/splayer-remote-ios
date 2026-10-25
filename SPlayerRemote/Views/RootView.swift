@@ -1,26 +1,28 @@
 import SwiftUI
 
-/// 主界面：单一「正在播放」面板 + 悬浮玻璃交通控制簇。
+/// 主界面：克制的「正在播放」面板 + 悬浮队列 / 歌词胶囊。
+///
+/// v1.3 版式重排：移除重复的元数据解释与巨大状态标题；版本 / 诊断移入设置工具栏；
+/// 顶部只保留一条纤细的连接状态栏；底部胶囊放在安全区内，不遮挡控制。
 struct RootView: View {
     @EnvironmentObject private var remote: RemoteViewModel
     @EnvironmentObject private var settings: SettingsStore
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showSettings = false
-    @State private var showDiagnostics = false
     @State private var showQueue = false
+    @State private var showLyric = false
 
     var body: some View {
         ZStack {
             WarmBackground()
 
             ScrollView {
-                VStack(spacing: 22) {
-                    header
+                VStack(spacing: 16) {
+                    slimHeader
 
                     if remote.connection.isConnected {
-                        PlaybackStatusPanel()
-                        TransportCluster()
+                        NowPlayingScreen()
                     } else {
                         EmptyStatePanel(onOpenSettings: { showSettings = true })
                     }
@@ -32,7 +34,9 @@ struct RootView: View {
                     footer
                 }
                 .padding(.horizontal, 18)
-                .padding(.vertical, 24)
+                .padding(.top, 6)
+                // 为底部两个悬浮胶囊预留空间，绝不遮挡控制。
+                .padding(.bottom, 96)
                 .frame(maxWidth: 560)
                 .frame(maxWidth: .infinity)
             }
@@ -49,15 +53,22 @@ struct RootView: View {
                     .padding(.bottom, 18)
             }
         }
+        .overlay(alignment: .bottomLeading) {
+            if remote.connection.isConnected, remote.lyric != nil {
+                LyricPillButton { showLyric = true }
+                    .padding(.leading, 18)
+                    .padding(.bottom, 18)
+            }
+        }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
-        .sheet(isPresented: $showDiagnostics) {
-            DiagnosticsView()
-        }
         .sheet(isPresented: $showQueue) {
             QueueSheet()
+        }
+        .sheet(isPresented: $showLyric) {
+            LyricSheet(document: remote.lyric, positionMs: remote.currentPositionMs)
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -83,38 +94,25 @@ struct RootView: View {
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: remote.connection)
     }
 
-    private var header: some View {
+    /// 纤细顶部状态栏：连接状态 + 设置入口（诊断 / 版本在设置工具栏内）。
+    private var slimHeader: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("SPlayer 遥控器")
-                    .font(.title2.bold())
-                Text("适用于 SPlayer for Android Next")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
+            Text("SPlayer 遥控器")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
             ConnectionBadge(
                 state: remote.connection,
                 isStale: remote.isStale,
                 transport: remote.transport
             )
-
-            Button {
-                showDiagnostics = true
-            } label: {
-                Image(systemName: "waveform.path.ecg")
-                    .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("诊断")
-
             Button {
                 showSettings = true
             } label: {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 18, weight: .semibold))
                     .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("设置")

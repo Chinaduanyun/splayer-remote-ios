@@ -60,116 +60,67 @@ struct CoverImageView: View {
     }
 }
 
-// MARK: - 当前曲目元数据
+/// 大尺寸自适应封面：随可用宽度缩放并保持 1:1；无真实封面时显示占位符，绝不伪造。
+/// 竖屏 / 横屏 / 动态字体下都不会溢出，且最大宽度受控，保持版面克制。
+struct ArtworkHeroView: View {
+    let url: URL?
 
-/// 主屏元数据：封面 + 标题 / 艺人 / 专辑 / 来源。
-/// 元数据不可用时改为诚实的说明，绝不伪造标题或封面。
-struct NowPlayingMetadataSection: View {
-    @EnvironmentObject private var remote: RemoteViewModel
-    @State private var showLyric = false
+    @State private var image: UIImage?
+    @State private var failed = false
+    @State private var requestID = UUID()
 
     var body: some View {
-        if let track = remote.currentTrack {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center, spacing: 14) {
-                    CoverImageView(url: track.coverURL, size: 72)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(track.title ?? "未知标题")
-                            .font(.headline)
-                            .lineLimit(2)
-                        Text(track.artistLine ?? "未知艺人")
-                            .font(.subheadline)
+        Color.clear
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                    if let image {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Image(systemName: failed ? "music.note" : "photo")
+                            .font(.system(size: 52))
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                        if let album = track.album?.name {
-                            Text(album)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        HStack(spacing: 6) {
-                            if let source = track.source {
-                                Text(source.uppercased())
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            if let duration = track.durationText {
-                                Text(duration)
-                                    .font(.caption2.monospacedDigit())
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
                     }
-                    Spacer(minLength: 0)
                 }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+            )
+            .frame(maxWidth: 300)
+            .frame(maxWidth: .infinity)
+            .task(id: url) {
+                let currentRequest = UUID()
+                requestID = currentRequest
+                await load(url, requestID: currentRequest)
+            }
+            .accessibilityHidden(true)
+    }
 
-                HStack(spacing: 10) {
-                    if remote.lyric != nil {
-                        Button {
-                            showLyric = true
-                        } label: {
-                            Label("歌词", systemImage: "text.quote")
-                                .font(.footnote.weight(.semibold))
-                                .frame(minHeight: 44)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(Theme.accent)
-                    }
-                    Text(remote.songId.map { "#\($0)" } ?? "—")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.tertiary)
-                    Spacer(minLength: 0)
-                }
-            }
-            .sheet(isPresented: $showLyric) {
-                LyricSheet(document: remote.lyric, positionMs: remote.currentPositionMs)
-            }
-        } else {
-            MetadataUnavailableNotice()
+    private func load(_ target: URL?, requestID currentRequest: UUID) async {
+        image = nil
+        failed = false
+        guard let target else { return }
+        if let cached = CoverImageLoader.shared.cachedImage(for: target) {
+            guard !Task.isCancelled, requestID == currentRequest, url == target else { return }
+            image = cached
+            return
         }
+        let loaded = await CoverImageLoader.shared.image(for: target)
+        guard !Task.isCancelled, requestID == currentRequest, url == target else { return }
+        image = loaded
+        failed = loaded == nil
     }
 }
 
-/// 元数据不可用时的诚实提示；不影响控制能力。
-struct MetadataUnavailableNotice: View {
-    @EnvironmentObject private var remote: RemoteViewModel
+// MARK: - 队列浮标 + 歌词浮标
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "music.note.list")
-                    .foregroundStyle(Theme.accent)
-                    .accessibilityHidden(true)
-                Text("曲目元数据不可用")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text(remote.songId.map { "#\($0)" } ?? "—")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            Text(hint)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var hint: String {
-        switch remote.metadataState {
-        case .loading:
-            return "正在获取局域网分享的曲目信息…"
-        case .unavailable:
-            return "SPlayer 的局域网分享未开启，或未返回队列，仅显示歌曲标识。播放控制不受影响。"
-        case .idle, .available:
-            return "尚未获取到局域网分享的曲目信息。"
-        }
-    }
-}
-
-// MARK: - 队列浮标 + 队列面板
-
-/// 右下角悬浮胶囊：队列图标 + 曲目数量。点击打开只读队列面板。
+/// 右下角悬浮胶囊：队列图标 + 曲目数量。点击打开队列面板。
 struct QueuePillButton: View {
     @EnvironmentObject private var remote: RemoteViewModel
     let action: () -> Void
@@ -181,6 +132,11 @@ struct QueuePillButton: View {
                     .font(.system(size: 15, weight: .semibold))
                 Text("\(remote.queue?.trackCount ?? 0)")
                     .font(.caption.monospacedDigit().weight(.semibold))
+                if remote.canSelectFromQueue {
+                    Image(systemName: "hand.tap.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                }
             }
             .padding(.horizontal, 14)
             .frame(minHeight: 44)
@@ -189,37 +145,82 @@ struct QueuePillButton: View {
         .buttonStyle(.plain)
         .foregroundStyle(.primary)
         .glassPanel(cornerRadius: 22)
-        .accessibilityLabel("播放队列，共 \(remote.queue?.trackCount ?? 0) 首")
+        .accessibilityLabel("播放队列，共 \(remote.queue?.trackCount ?? 0) 首\(remote.canSelectFromQueue ? "，可点播" : "，只读")")
     }
 }
 
-/// 只读队列浏览面板：高亮当前曲目，点击行展开信息（**不**提供选曲 / 播放）。
+/// 左下角悬浮胶囊：打开独立歌词面板，避免主屏堆叠冗长歌词。
+struct LyricPillButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "text.quote")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("歌词")
+                    .font(.caption.weight(.semibold))
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 44)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .glassPanel(cornerRadius: 22)
+        .accessibilityLabel("打开歌词")
+    }
+}
+
+/// 队列浏览面板：本地搜索 / 过滤当前队列；可控时支持点播（发送一次 playAt，待权威确认）。
 struct QueueSheet: View {
     @EnvironmentObject private var remote: RemoteViewModel
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedId: String?
+    @State private var query = ""
+
+    /// (原始下标, 曲目) —— 保留下标以便点播时校验「行身份 + 下标」，解决重复 id 歧义。
+    private var filtered: [(index: Int, track: LanShareTrack)] {
+        guard let tracks = remote.queue?.tracks else { return [] }
+        let indexed = Array(tracks.enumerated()).map { (index: $0.offset, track: $0.element) }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return indexed }
+        return indexed.filter { item in
+            (item.track.title ?? "").localizedCaseInsensitiveContains(trimmed)
+                || (item.track.artistLine ?? "").localizedCaseInsensitiveContains(trimmed)
+                || (item.track.album?.name ?? "").localizedCaseInsensitiveContains(trimmed)
+        }
+    }
 
     var body: some View {
         NavigationStack {
             Group {
                 if let queue = remote.queue, !queue.tracks.isEmpty {
-                    List(queue.tracks) { track in
-                        Button {
-                            selectedId = (selectedId == track.id) ? nil : track.id
-                        } label: {
-                            QueueRow(
-                                track: track,
-                                isCurrent: track.id == remote.currentTrack?.id,
-                                expanded: selectedId == track.id
-                            )
+                    if filtered.isEmpty {
+                        ContentUnavailableCompat(message: "没有匹配的曲目。")
+                    } else {
+                        List {
+                            ForEach(filtered, id: \.index) { item in
+                                Button {
+                                    guard remote.canSelectFromQueue else { return }
+                                    remote.playQueueItem(trackId: item.track.id, index: item.index)
+                                } label: {
+                                    QueueRow(
+                                        track: item.track,
+                                        isCurrent: item.track.id == remote.currentTrack?.id,
+                                        selectable: remote.canSelectFromQueue
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(!remote.canSelectFromQueue)
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .listStyle(.plain)
                     }
-                    .listStyle(.plain)
                 } else {
                     EmptyQueueNotice()
                 }
             }
+            .searchable(text: $query, prompt: "搜索当前队列")
             .navigationTitle("播放队列")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -228,13 +229,45 @@ struct QueueSheet: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                Text("只读浏览：上游未提供选曲接口，点击曲目仅展开信息，不会切换播放。")
+                QueuePermissionFooter()
+            }
+        }
+    }
+}
+
+/// 队列权限 / 点播说明页脚：明确「只读 vs 可点播」，绝不夸大为全部歌单。
+private struct QueuePermissionFooter: View {
+    @EnvironmentObject private var remote: RemoteViewModel
+
+    var body: some View {
+        VStack(spacing: 6) {
+            if let hint = remote.queueReadOnlyHint {
+                Text(hint)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                    .padding(10)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if remote.canSelectFromQueue {
+                Text("点播只作用于主机**当前队列**；发送后等待权威播放状态确认，不重复发送。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if remote.collaborationState == .unauthorized || remote.collaborationState == .unavailable {
+                Button {
+                    remote.retryCollaborationAuthorization()
+                } label: {
+                    Label("重试协作授权", systemImage: "arrow.clockwise")
+                        .font(.footnote.weight(.semibold))
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .tint(Theme.accent)
             }
         }
+        .padding(10)
     }
 }
 
@@ -260,54 +293,62 @@ private struct EmptyQueueNotice: View {
     }
 }
 
+/// 兼容旧系统的空态提示（避免直接使用 ContentUnavailableView 造成可用性分叉）。
+private struct ContentUnavailableCompat: View {
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 32))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(24)
+    }
+}
+
 private struct QueueRow: View {
     let track: LanShareTrack
     let isCurrent: Bool
-    let expanded: Bool
+    let selectable: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 10) {
-                CoverImageView(url: track.coverURL, size: 40)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(track.title ?? "未知标题")
-                        .font(.subheadline.weight(isCurrent ? .semibold : .regular))
-                        .lineLimit(1)
-                    Text(track.artistLine ?? "未知艺人")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                if isCurrent {
-                    Image(systemName: "speaker.wave.2.fill")
-                        .font(.caption)
-                        .foregroundStyle(Theme.accent)
-                        .accessibilityLabel("当前播放")
-                }
-                if let duration = track.durationText {
-                    Text(duration)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
+        HStack(alignment: .center, spacing: 10) {
+            CoverImageView(url: track.coverURL, size: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(track.title ?? "未知标题")
+                    .font(.subheadline.weight(isCurrent ? .semibold : .regular))
+                    .lineLimit(1)
+                Text(track.artistLine ?? "未知艺人")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-
-            if expanded {
-                VStack(alignment: .leading, spacing: 2) {
-                    if let album = track.album?.name {
-                        Text("专辑：\(album)").font(.caption2).foregroundStyle(.secondary)
-                    }
-                    if let source = track.source {
-                        Text("来源：\(source)").font(.caption2).foregroundStyle(.secondary)
-                    }
-                    Text("歌曲标识：#\(track.id)").font(.caption2).foregroundStyle(.tertiary)
-                }
-                .padding(.top, 2)
+            Spacer(minLength: 0)
+            if isCurrent {
+                Image(systemName: "speaker.wave.2.fill")
+                    .font(.caption)
+                    .foregroundStyle(Theme.accent)
+                    .accessibilityLabel("当前播放")
+            } else if selectable {
+                Image(systemName: "play.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let duration = track.durationText {
+                Text(duration)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(minHeight: 44)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(track.title ?? "未知标题")，\(track.artistLine ?? "未知艺人")\(isCurrent ? "，当前播放" : "")")
     }
 }
 

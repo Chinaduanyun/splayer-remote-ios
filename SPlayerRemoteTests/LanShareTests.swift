@@ -194,4 +194,51 @@ final class LanShareTests: XCTestCase {
         XCTAssertTrue(lyric.isSupported)
         XCTAssertLessThanOrEqual(lyric.lines.count, LanShareLimits.maxLyricLines)
     }
+
+    // MARK: - 协作状态 / 命令编码
+
+    func testStatusAuthorizedWithToken() throws {
+        let status = try LanShareStatus.decode(from: LanShareFixtures.statusJSON())
+        XCTAssertTrue(status.enabled)
+        XCTAssertTrue(status.collabEnabled)
+        XCTAssertTrue(status.collabAuthorized)
+        XCTAssertEqual(status.wsToken, "synthetic-ws-token")
+        XCTAssertTrue(status.canCollaborate)
+    }
+
+    func testStatusUnauthorizedEvenWhenSharingEnabled() throws {
+        let status = try LanShareStatus.decode(from: LanShareFixtures.statusJSON(collabAuthorized: false, wsToken: nil))
+        XCTAssertTrue(status.enabled)
+        XCTAssertTrue(status.collabEnabled)
+        XCTAssertFalse(status.collabAuthorized)
+        XCTAssertNil(status.wsToken)
+        XCTAssertFalse(status.canCollaborate, "未授权不得建立协作通道")
+    }
+
+    func testStatusDisabledSharing() throws {
+        let status = try LanShareStatus.decode(from: LanShareFixtures.statusJSON(enabled: false, collabEnabled: false, collabAuthorized: false, wsToken: nil))
+        XCTAssertFalse(status.canCollaborate)
+    }
+
+    func testStatusMissingFieldsDefaultToSafeFalse() throws {
+        let status = try LanShareStatus.decode(from: Data(#"{}"#.utf8))
+        XCTAssertFalse(status.enabled)
+        XCTAssertFalse(status.collabEnabled)
+        XCTAssertFalse(status.collabAuthorized)
+        XCTAssertNil(status.wsToken)
+        XCTAssertFalse(status.canCollaborate)
+    }
+
+    func testPlayAtCommandEncodingIsZeroBasedAndTyped() throws {
+        let data = try XCTUnwrap(CollaborationCommand.playAt(index: 3, timestampMs: 1_700_000_000_000))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["type"] as? String, "command")
+        XCTAssertEqual(json["action"] as? String, "playAt")
+        XCTAssertEqual(json["value"] as? Int, 3)
+        XCTAssertEqual(json["ts"] as? Int, 1_700_000_000_000)
+    }
+
+    func testPlayAtRejectsNegativeIndex() {
+        XCTAssertNil(CollaborationCommand.playAt(index: -1, timestampMs: 1))
+    }
 }

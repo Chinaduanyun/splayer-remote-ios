@@ -5,6 +5,7 @@ import Foundation
 
 /// Live Activity 控制器的有序性 / 限频 / end 语义，以及 intent 反馈的曲目与新鲜度规则。
 @available(iOS 17.0, *)
+@MainActor
 final class LiveActivityControllerTests: XCTestCase {
 
     // MARK: - Helpers
@@ -87,6 +88,46 @@ final class LiveActivityControllerTests: XCTestCase {
         await controller.waitForPendingOperations()
 
         XCTAssertEqual(backend.requestCount + backend.updateCount, 3, "4 秒内按 2 秒间隔接收 3 次心跳，间隔内更新应被抑制")
+    }
+
+    /// R3：内容持续变化的突发也应被合幷为每区间一次，最终快照必须交付。
+    func testChangedContentBurstCoalescesAndDeliversLatest() async {
+        let backend = SpyLiveActivityBackend()
+        var now: TimeInterval = 100
+        let controller = LiveActivityController(
+            userEnabled: true,
+            minUpdateInterval: 2,
+            backend: backend,
+            uptime: { now }
+        )
+
+        for index in 0..<5 {
+            now = 100 + Double(index)
+            controller.startOrUpdate(snapshot(title: "Title \(index)", timestamp: Date(timeIntervalSince1970: Double(index))))
+        }
+        await controller.waitForPendingOperations()
+
+        XCTAssertEqual(backend.requestCount + backend.updateCount, 3, "变化的标题突发应被合并为每 2 秒一次")
+        XCTAssertEqual(backend.lastTitle, "Title 4", "最终快照必须被交付")
+    }
+
+    /// R3：播放 / 暂停等生命周期变化立即交付，不受限频影响。
+    func testPlaybackLifecycleChangeBypassesThrottle() async {
+        let backend = SpyLiveActivityBackend()
+        var now: TimeInterval = 100
+        let controller = LiveActivityController(
+            userEnabled: true,
+            minUpdateInterval: 2,
+            backend: backend,
+            uptime: { now }
+        )
+
+        controller.startOrUpdate(snapshot(title: "A", isPlaying: true))
+        now = 100.5
+        controller.startOrUpdate(snapshot(title: "A", isPlaying: false))
+        await controller.waitForPendingOperations()
+
+        XCTAssertEqual(backend.requestCount + backend.updateCount, 2, "播放 / 暂停变化必须立即交付")
     }
 
     func testEndSupersedesPendingUpdateAndPreventsLateRecreation() async {
@@ -189,6 +230,26 @@ final class LiveActivityControllerTests: XCTestCase {
         XCTAssertFalse(updated.connectionAvailable)
     }
 
+    /// R4：命令后只拿到 status（拿不到 now-playing 身份）时，不得把旧曲目标为刚更新。
+    func testStatusOnlyRefreshDoesNotMarkOldTrackFresh() {
+        let oldDate = Date(timeIntervalSince1970: 111)
+        let existing = state(songId: "5", title: "Old title", artist: "Old artist", lastUpdate: oldDate, connectionAvailable: true)
+
+        let updated = RemoteIntentFeedbackBuilder.makeState(
+            existing: existing,
+            status: StatusResponse(state: .playing, position: 0, duration: 0, volume: 1, isFinished: false),
+            nowPlaying: nil,
+            track: nil,
+            authoritativeDate: nil
+        )
+
+        XCTAssertEqual(updated.songId, "5")
+        XCTAssertEqual(updated.title, "Old title", "旧标题不得被冒充为刚确认")
+        XCTAssertEqual(updated.lastUpdate, oldDate, "status-only 不得刷新时间戳")
+        XCTAssertFalse(updated.connectionAvailable, "status-only 不得冒充新鲜连接")
+        XCTAssertTrue(updated.isPlaying, "独立的播放状态字段仍可更新")
+    }
+
     func testSuccessfulRefreshUsesAuthoritativeDateAndTrack() {
         let authoritative = Date(timeIntervalSince1970: 9_999)
         let existing = state(songId: "1")
@@ -219,13 +280,17 @@ final class LiveActivityControllerTests: XCTestCase {
     }
 }
 
+@MainActor
 final class SpyLiveActivityBackend: LiveActivityBackend {
     var isAuthorized = true
     private(set) var requestCount = 0
     private(set) var updateCount = 0
     private(set) var endCount = 0
     private(set) var staleDates: [Date?] = []
+    private(set) var states: [RemoteActivityAttributes.ContentState] = []
     private var active = false
+
+    var lastTitle: String? { states.last?.title }
 
     func hasActiveActivity() -> Bool { active }
 
@@ -233,12 +298,14 @@ final class SpyLiveActivityBackend: LiveActivityBackend {
         updateCount += 1
         active = true
         staleDates.append(staleDate)
+        states.append(state)
     }
 
     func request(state: RemoteActivityAttributes.ContentState, staleDate: Date?) async {
         requestCount += 1
         active = true
         staleDates.append(staleDate)
+        states.append(state)
     }
 
     func endAll() async {

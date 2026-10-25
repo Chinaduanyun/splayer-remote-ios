@@ -4,6 +4,8 @@ import Foundation
 import ActivityKit
 
 /// Live Activity 的后端抽象：生产使用 ActivityKit；测试注入记录型替身。
+/// 所有生命周期状态隔离在 MainActor，避免与视图 / ViewModel 的写入竞争。
+@MainActor
 protocol LiveActivityBackend: AnyObject {
     var isAuthorized: Bool { get }
     func hasActiveActivity() -> Bool
@@ -13,7 +15,10 @@ protocol LiveActivityBackend: AnyObject {
 }
 
 @available(iOS 17.0, *)
+@MainActor
 final class ActivityKitLiveActivityBackend: LiveActivityBackend {
+    nonisolated init() {}
+
     var isAuthorized: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
 
     func hasActiveActivity() -> Bool {
@@ -43,11 +48,14 @@ final class ActivityKitLiveActivityBackend: LiveActivityBackend {
 /// 生产 Live Activity 控制器（iOS 17+）。
 ///
 /// - 用户显式开关 + `ActivityAuthorizationInfo` 双重门控；
+/// - 生命周期状态（世代 / 结束标志 / 开关 / 任务链）全部隔离在 MainActor：
+///   非隔离方法里创建的 `Task` 不会继承调用方的 actor，因此这里统一 @MainActor；
 /// - 所有 ActivityKit 生命周期操作通过**有序任务链**串行执行，`end()` 递增世代并排在末尾，
 ///   因此 end 之后不会再有更早的 update 重建 Activity；
-/// - 限频比较**排除时间戳**（只比较展示内容），避免每个 WS tick 都更新；
-/// - 内容带 `staleDate`，过期后由系统 / 视图标记为不新鲜。
+/// - 限频：区间内只保留最新快照（合幷突发更新），但播放 / 缓冲 / 连接可用性等
+///   生命周期变化立即交付；重复心跳则按区间续期，避免锁屏数据被无界刷新或长期过期。
 @available(iOS 17.0, *)
+@MainActor
 final class LiveActivityController: LiveActivityPresenting {
 
     private let backend: LiveActivityBackend
@@ -62,7 +70,7 @@ final class LiveActivityController: LiveActivityPresenting {
     private var lastKey: ActivityContentKey?
     private var lastUpdateUptime: TimeInterval = 0
 
-    init(
+    nonisolated init(
         userEnabled: Bool = false,
         minUpdateInterval: TimeInterval = 2,
         staleInterval: TimeInterval = RemoteActivityLimits.staleInterval,
@@ -93,7 +101,14 @@ final class LiveActivityController: LiveActivityPresenting {
 
         let key = ActivityContentKey(snapshot: snapshot)
         let now = uptime()
-        if key == lastKey, now - lastUpdateUptime < minUpdateInterval {
+
+        // 生命周期相关变化（播放 / 缓冲 / 连接可用性）必须立即交付，避免锁屏控件滞后。
+        let lifecycleChanged = key.isPlaying != lastKey?.isPlaying
+            || key.isBuffering != lastKey?.isBuffering
+            || key.connectionAvailable != lastKey?.connectionAvailable
+
+        if !lifecycleChanged, now - lastUpdateUptime < minUpdateInterval {
+            // 合幷：区间内只保留最新快照，待下次越过区间时一次性交付，避免无界突发更新。
             return
         }
         lastKey = key
@@ -153,6 +168,7 @@ private struct ActivityContentKey: Equatable {
     let isPlaying: Bool
     let isBuffering: Bool
     let connectionAvailable: Bool
+    let sessionID: String
 
     init(snapshot: RemoteActivitySnapshot) {
         title = RemoteActivityLimits.truncated(snapshot.title, limit: RemoteActivityLimits.title)
@@ -161,6 +177,7 @@ private struct ActivityContentKey: Equatable {
         isPlaying = snapshot.isPlaying
         isBuffering = snapshot.isBuffering
         connectionAvailable = snapshot.connectionAvailable
+        sessionID = RemoteActivityLimits.truncated(snapshot.sessionID, limit: RemoteActivityLimits.sessionId)
     }
 }
 
@@ -174,7 +191,8 @@ extension RemoteActivityAttributes.ContentState {
             isPlaying: snapshot.isPlaying,
             isBuffering: snapshot.isBuffering,
             lastUpdate: snapshot.timestamp,
-            connectionAvailable: snapshot.connectionAvailable
+            connectionAvailable: snapshot.connectionAvailable,
+            sessionID: RemoteActivityLimits.truncated(snapshot.sessionID, limit: RemoteActivityLimits.sessionId)
         )
     }
 }

@@ -203,5 +203,58 @@ final class IntentExecutionTests: XCTestCase {
         XCTAssertNil(call.status)
         XCTAssertNil(call.nowPlaying)
     }
+
+    /// R4：命令后只拿到 status、拿不到 now-playing 时不得报告新鲜。
+    func testStatusOnlyPostCommandDoesNotReportFreshness() async throws {
+        let api = MockRemoteAPI()
+        api.statusResult = .success(StatusResponse(state: .paused, position: 0, duration: 0, volume: 1, isFinished: false))
+        api.nowPlayingResult = .failure(RemoteAPIError.transport("down"))
+        let feedback = RecordingIntentFeedback()
+
+        try await RemoteIntentCommandExecutor.execute(
+            rawCommand: "next",
+            sessionStore: makeAuthorizedStore(),
+            clientFactory: { _, _ in api },
+            feedback: feedback
+        )
+
+        XCTAssertEqual(api.sentCommands, [.next])
+        let call = try XCTUnwrap(feedback.applied.last)
+        XCTAssertNotNil(call.status)
+        XCTAssertNil(call.nowPlaying)
+        XCTAssertNil(call.authoritativeDate, "缺少 now-playing 身份不得报告新鲜")
+    }
+
+    /// R1：刷新 await 期间会话失效 / 被替换时，绝不反馈旧会话结果。
+    func testSessionInvalidatedDuringRefreshSuppressesFeedback() async throws {
+        let api = MockRemoteAPI()
+        let store = makeAuthorizedStore()
+        let gate = AsyncGate()
+        api.nowPlayingDelay = { await gate.wait() }
+        let feedback = RecordingIntentFeedback()
+
+        let task = Task {
+            try? await RemoteIntentCommandExecutor.execute(
+                rawCommand: "next",
+                sessionStore: store,
+                clientFactory: { _, _ in api },
+                feedback: feedback
+            )
+        }
+
+        var spins = 0
+        while api.sentCommands.isEmpty && spins < 2_000 {
+            await Task.yield()
+            spins += 1
+        }
+        XCTAssertEqual(api.sentCommands, [.next])
+
+        // 刷新仍在 await 中时替换 / 失效会话。
+        store.invalidate()
+        await gate.open()
+        await task.value
+
+        XCTAssertTrue(feedback.applied.isEmpty, "会话在刷新 await 期间失效不得反馈任何结果")
+    }
 }
 #endif

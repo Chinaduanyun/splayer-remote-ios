@@ -552,6 +552,7 @@ final class RecordingIntentFeedback: RemoteIntentFeedbackApplying {
 }
 
 /// 记录 Live Activity 快照的测试替身。
+@MainActor
 final class SpyLiveActivityPresenter: LiveActivityPresenting {
     var areActivitiesEnabled = true
     private(set) var snapshots: [RemoteActivitySnapshot] = []

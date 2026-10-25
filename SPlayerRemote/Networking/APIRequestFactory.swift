@@ -104,4 +104,28 @@ enum APIRequestFactory {
     static func jsonBody(_ object: [String: Any]) throws -> Data {
         try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
+
+    /// 协作控制 WS 请求：`ws(s)://host:port/api/lanShare/ws?token=<wsToken>`。
+    ///
+    /// 这是**经过批准的、必要的**协议例外：Native Android 端要求查询串 token
+    /// （不同于外部 WS 的请求头）。该 token 仅存在于本次连接的内存 URL 中，
+    /// 绝不写入日志 / Activity / 错误文案；`URLComponents` 负责百分号编码；
+    /// 不携带任何请求头凭据，也不附带 `role`（服务端默认 receiver，绝不冒充 host）。
+    static func collaborationWebSocketRequest(baseURL: URL, wsToken: String) -> URLRequest? {
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.scheme = (baseURL.scheme == "https") ? "wss" : "ws"
+        components.path = "\(lanSharePathPrefix)/ws"
+        components.fragment = nil
+        components.user = nil
+        components.password = nil
+        components.queryItems = [URLQueryItem(name: "token", value: wsToken)]
+        guard let url = components.url else { return nil }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return request
+    }
 }

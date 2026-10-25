@@ -5,7 +5,7 @@ import XCTest
 final class LiveActivityModelTests: XCTestCase {
 
     private let allowedLabels: Set<String> = [
-        "title", "artist", "songId", "isPlaying", "isBuffering", "lastUpdate", "connectionAvailable",
+        "title", "artist", "songId", "isPlaying", "isBuffering", "lastUpdate", "connectionAvailable", "sessionID",
     ]
 
     private func makeSnapshot() -> RemoteActivitySnapshot {

@@ -40,6 +40,18 @@ struct DiagnosticsView: View {
                     }
                 }
 
+                Section("协作控制（当前队列）") {
+                    DiagnosticsRow(label: "主机分享", value: remote.collaborationStatus?.enabled == true ? "已开启" : "未开启")
+                    DiagnosticsRow(label: "协作开关", value: remote.collaborationStatus?.collabEnabled == true ? "已开启" : "未开启")
+                    DiagnosticsRow(label: "本机授权", value: remote.collaborationStatus?.collabAuthorized == true ? "已授权" : "未授权")
+                    DiagnosticsRow(label: "通道", value: remote.collaborationState.displayName)
+                    DiagnosticsRow(label: "可点播", value: remote.canSelectFromQueue ? "是" : "否")
+                    if let pending = remote.pendingPlayback {
+                        DiagnosticsRow(label: "待确认曲目", value: "#\(pending.trackId)（下标 \(pending.index)）")
+                    }
+                    // 不展示 wsToken / URL / 原始错误，避免泄漏内存级凭据。
+                }
+
                 Section("播放（只读）") {
                     DiagnosticsRow(label: "状态", value: remote.playbackState.displayName)
                     DiagnosticsRow(label: "缓冲", value: (remote.isBuffering) ? "是" : "否")

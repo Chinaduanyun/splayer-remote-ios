@@ -41,11 +41,14 @@ struct RemotePlaybackLiveActivity: Widget {
                     ControlRow(state: context.state)
                 }
             } compactLeading: {
-                Image(systemName: "music.note")
+                Image(systemName: context.state.isBuffering ? "ellipsis" : "music.note")
+                    .accessibilityHidden(true)
             } compactTrailing: {
                 Image(systemName: context.state.isPlaying ? "pause.fill" : "play.fill")
+                    .accessibilityLabel(context.state.isPlaying ? "正在播放" : "已暂停")
             } minimal: {
-                Image(systemName: "music.note")
+                Image(systemName: context.state.isPlaying ? "play.fill" : "pause.fill")
+                    .accessibilityLabel(context.state.isPlaying ? "正在播放" : "已暂停")
             }
             .keylineTint(.orange)
         }
