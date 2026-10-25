@@ -85,6 +85,84 @@ final class CollaborationTests: XCTestCase {
         return vm
     }
 
+    func testDiscoveryMutationBarrierRejectsOldAndPremutationSnapshots() async throws {
+        let api = MockRemoteAPI()
+        let factory = MockCollaborationSocketFactory()
+        let vm = await makeLiveViewModel(api: api, factory: factory)
+        defer { vm.disconnectByUser() }
+        let old = try XCTUnwrap(vm.makeQueueSelection(for: try XCTUnwrap(track(vm, id: "8"))))
+        var resumeOld: CheckedContinuation<Void, Never>?
+        api.lanShareQueueDelay = { await withCheckedContinuation { resumeOld = $0 } }
+        let preRead = Task { await vm.refreshMetadataNow() }
+        await waitUntil { resumeOld != nil }
+        let lease = try XCTUnwrap(vm.acquireDiscoveryCommand())
+        let barrier = try XCTUnwrap(vm.beginDiscoveryQueueMutation(lease))
+        vm.releaseDiscoveryCommand(lease)
+        XCTAssertFalse(vm.canSelectFromQueue)
+        vm.playQueueItem(old)
+        XCTAssertNil(vm.pendingPlayback)
+        // A pre-barrier response must not restore eligibility, even with same playing ID.
+        resumeOld?.resume()
+        await preRead.value
+        XCTAssertFalse(vm.canSelectFromQueue)
+        api.lanShareQueueDelay = nil
+        vm.resolveDiscoveryQueueMutation(barrier, generation: vm.generation)
+        api.lanShareQueueResult = .failure(URLError(.networkConnectionLost))
+        await vm.finishDiscoveryQueueMutation(barrier, generation: vm.generation)
+        XCTAssertFalse(vm.canSelectFromQueue)
+        api.lanShareQueueResult = .success(makeQueue(ids: [42, 99]))
+        var resumeNew: CheckedContinuation<Void, Never>?
+        api.lanShareQueueDelay = { await withCheckedContinuation { resumeNew = $0 } }
+        let postRead = Task { await vm.finishDiscoveryQueueMutation(barrier, generation: vm.generation) }
+        await waitUntil { resumeNew != nil }
+        vm.playQueueItem(old)
+        XCTAssertNil(vm.pendingPlayback)
+        XCTAssertFalse(vm.canSelectFromQueue)
+        resumeNew?.resume()
+        await postRead.value
+        XCTAssertTrue(vm.canSelectFromQueue)
+        vm.playQueueItem(old)
+        XCTAssertNil(vm.pendingPlayback)
+        XCTAssertEqual(vm.queue?.tracks.last?.id, "99")
+    }
+
+    func testLostAcceptedPOSTCannotUnlockBeforeTerminalStatusAndOrderedRead() async throws {
+        let api = MockRemoteAPI()
+        let factory = MockCollaborationSocketFactory()
+        let vm = await makeLiveViewModel(api: api, factory: factory)
+        defer { vm.disconnectByUser() }
+        let old = try XCTUnwrap(vm.makeQueueSelection(for: try XCTUnwrap(track(vm, id: "8"))))
+        let discovery = LostAcceptedDiscoveryAPI()
+        let model = DiscoveryViewModel(factory: { _ in discovery }, now: { Date(timeIntervalSince1970: 1) }, pollLimit: 1, sleep: {})
+        await model.connect(remote: vm)
+        await model.query("discovery/daily-songs")
+        await model.play(0, remote: vm)
+        XCTAssertEqual(discovery.posts, 1)
+        XCTAssertTrue(model.needsReconciliation)
+        XCTAssertFalse(vm.canSelectFromQueue)
+        // A successful old queue GET while execution is held is not ordering proof.
+        let prematureSnapshot = try await api.fetchLanShareQueue()
+        XCTAssertEqual(prematureSnapshot?.tracks.last?.id, "8")
+        let readsBeforeManualRefresh = api.lanShareQueueCallCount
+        await vm.refreshMetadataNow()
+        XCTAssertEqual(api.lanShareQueueCallCount, readsBeforeManualRefresh)
+        XCTAssertFalse(vm.canSelectFromQueue)
+        vm.playQueueItem(old)
+        XCTAssertNil(vm.pendingPlayback)
+        await model.reconcile(remote: vm) // pending: still no ordering proof
+        XCTAssertFalse(vm.canSelectFromQueue)
+        // Release held Android execution; terminal status now precedes the eligible queue GET.
+        api.lanShareQueueResult = .success(makeQueue(ids: [42, 99]))
+        discovery.applied = true
+        await model.reconcile(remote: vm)
+        XCTAssertEqual(discovery.posts, 1)
+        XCTAssertFalse(model.needsReconciliation)
+        XCTAssertTrue(vm.canSelectFromQueue)
+        XCTAssertEqual(vm.queue?.tracks.last?.id, "99")
+        vm.playQueueItem(old)
+        XCTAssertNil(vm.pendingPlayback)
+    }
+
     private func track(_ vm: RemoteViewModel, id: String) -> LanShareTrack? {
         vm.queue?.tracks.first(where: { $0.id == id })
     }
@@ -587,5 +665,34 @@ final class CollaborationTests: XCTestCase {
         defer { vm.disconnect() }
         await waitUntil { vm.collaborationState == .live }
         XCTAssertTrue(factory.latest?.sentTexts.isEmpty ?? true, "重连后绝不重放旧命令")
+    }
+}
+
+
+private final class LostAcceptedDiscoveryAPI: DiscoveryAPI {
+    var posts = 0
+    var applied = false
+    private var command = UUID()
+    func get<T: Decodable>(_ path: String, query: [URLQueryItem], as: T.Type) async throws -> T {
+        let json: String
+        if path == "capabilities" {
+            json = """
+            {"protocolVersion":1,"serverSessionId":"held-session","accountState":"signedIn","rendererReady":true,"collabAuthorized":true}
+            """
+        } else if path.hasPrefix("commands/") {
+            XCTAssertEqual(path, "commands/\(command.uuidString)")
+            XCTAssertEqual(query.first?.value, "held-session")
+            json = "{\"commandId\":\"\(command.uuidString)\",\"state\":\"\(applied ? "applied" : "pending")\"}"
+        } else {
+            json = """
+            {"selectionId":"11111111-1111-4111-8111-111111111111","expiresAt":200000,"items":[{"id":"42","title":"Song","artists":[]}],"offset":0,"nextOffset":null,"truncated":false}
+            """
+        }
+        return try JSONDecoder().decode(T.self, from: Data(json.utf8))
+    }
+    func submit(session: String, selection: UUID, index: Int, command: UUID) async throws -> DiscoveryCommandStatus {
+        posts += 1
+        self.command = command // accepted; execution deliberately held until test sets applied
+        throw URLError(.networkConnectionLost)
     }
 }

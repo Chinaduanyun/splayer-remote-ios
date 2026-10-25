@@ -10,16 +10,50 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showSettings = false
-    @State private var showQueue = false
+    @State private var tab = 0
     @State private var showLyric = false
 
     var body: some View {
         ZStack {
             WarmBackground()
 
+            VStack(spacing: 0) {
+                slimHeader.padding(.horizontal, 18)
+                TabView(selection: $tab) {
+                    DiscoveryView().tabItem { Label("发现", systemImage: "sparkles") }.tag(0)
+                    nowPlayingPage.tabItem { Label("正在播放", systemImage: "play.circle") }.tag(1)
+                    QueueSheet(embedded: true).tabItem { Label("当前队列", systemImage: "music.note.list") }.tag(2)
+                }
+                if tab != 1, remote.connection.isConnected {
+                    HStack {
+                        Button { tab = 1 } label: {
+                            Text(remote.currentTrack?.title ?? "正在播放").lineLimit(1)
+                        }
+                        Spacer()
+                        Button { remote.send(remote.nowPlaying?.playing == true ? .pause : .play) } label: { Image(systemName: remote.nowPlaying?.playing == true ? "pause.fill" : "play.fill") }
+                            .disabled(!remote.canControl)
+                    }.padding().background(.ultraThinMaterial)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .sheet(isPresented: $showSettings) { SettingsView() }
+        .sheet(isPresented: $showLyric) { LyricSheet() }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active:
+                remote.setScenePhase(.active)
+                if !showSettings { Task { await remote.connectIfConfigured() } }
+            case .inactive: remote.setScenePhase(.inactive)
+            default: remote.setScenePhase(.background)
+            }
+        }
+        .task { if !showSettings { await remote.connectIfConfigured() } }
+    }
+
+    private var nowPlayingPage: some View {
             ScrollView {
                 VStack(spacing: 16) {
-                    slimHeader
 
                     if remote.connection.isConnected {
                         NowPlayingScreen()
@@ -45,50 +79,12 @@ struct RootView: View {
                 await remote.refreshNow()
                 await remote.refreshMetadataNow()
             }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if remote.connection.isConnected {
-                QueuePillButton { showQueue = true }
-                    .padding(.trailing, 18)
-                    .padding(.bottom, 18)
-            }
-        }
+
         .overlay(alignment: .bottomLeading) {
             if remote.connection.isConnected, remote.lyric != nil {
                 LyricPillButton { showLyric = true }
                     .padding(.leading, 18)
                     .padding(.bottom, 18)
-            }
-        }
-        .preferredColorScheme(.dark)
-        .sheet(isPresented: $showSettings) {
-            SettingsView()
-        }
-        .sheet(isPresented: $showQueue) {
-            QueueSheet()
-        }
-        .sheet(isPresented: $showLyric) {
-            LyricSheet()
-        }
-        .onChange(of: scenePhase) { _, phase in
-            switch phase {
-            case .active:
-                remote.setScenePhase(.active)
-                if !showSettings {
-                    Task { await remote.connectIfConfigured() }
-                }
-            case .inactive:
-                remote.setScenePhase(.inactive)
-            case .background:
-                remote.setScenePhase(.background)
-            @unknown default:
-                remote.setScenePhase(.background)
-            }
-        }
-        .task {
-            // 启动时仅在用户显式开启自动连接且有可用配置时连接。
-            if !showSettings {
-                await remote.connectIfConfigured()
             }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: remote.connection)

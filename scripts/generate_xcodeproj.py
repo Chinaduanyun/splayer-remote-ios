@@ -28,6 +28,9 @@ BUNDLE_ID = "com.example.splayerremote"
 EXT_BUNDLE_ID = BUNDLE_ID + ".liveactivity"
 
 APP_SOURCES = [
+    "SPlayerRemote/Networking/DiscoveryAPI.swift",
+    "SPlayerRemote/ViewModels/DiscoveryViewModel.swift",
+    "SPlayerRemote/Views/DiscoveryView.swift",
     "SPlayerRemote/App/SPlayerRemoteApp.swift",
     "SPlayerRemote/Models/RemoteModels.swift",
     "SPlayerRemote/Models/RemoteEvents.swift",
@@ -68,6 +71,8 @@ APP_RESOURCES = [
 ]
 
 TEST_SOURCES = [
+    "SPlayerRemoteTests/DiscoveryTests.swift",
+    "SPlayerRemoteTests/DiscoveryTransportTests.swift",
     "SPlayerRemoteTests/TestSupport.swift",
     "SPlayerRemoteTests/HostValidatorTests.swift",
     "SPlayerRemoteTests/RequestEncodingTests.swift",
@@ -422,13 +427,13 @@ def main():
         "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
         "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "AccentColor",
         "CODE_SIGN_STYLE": "Automatic",
-        "CURRENT_PROJECT_VERSION": "4",
+        "CURRENT_PROJECT_VERSION": "5",
         "ENABLE_PREVIEWS": "YES",
         "GENERATE_INFOPLIST_FILE": "NO",
         "INFOPLIST_FILE": q(INFO_PLIST),
         "IPHONEOS_DEPLOYMENT_TARGET": "17.0",
         "LD_RUNPATH_SEARCH_PATHS": '("$(inherited)", "@executable_path/Frameworks")',
-        "MARKETING_VERSION": "1.3",
+        "MARKETING_VERSION": "1.4",
         "PRODUCT_BUNDLE_IDENTIFIER": q(BUNDLE_ID),
         "PRODUCT_NAME": '"$(TARGET_NAME)"',
         "SUPPORTED_PLATFORMS": '"iphoneos iphonesimulator"',
@@ -445,10 +450,10 @@ def main():
     common_tests = {
         "BUNDLE_LOADER": '"$(TEST_HOST)"',
         "CODE_SIGN_STYLE": "Automatic",
-        "CURRENT_PROJECT_VERSION": "4",
+        "CURRENT_PROJECT_VERSION": "5",
         "GENERATE_INFOPLIST_FILE": "YES",
         "IPHONEOS_DEPLOYMENT_TARGET": "17.0",
-        "MARKETING_VERSION": "1.3",
+        "MARKETING_VERSION": "1.4",
         "PRODUCT_BUNDLE_IDENTIFIER": q(BUNDLE_ID + ".tests"),
         "PRODUCT_NAME": '"$(TARGET_NAME)"',
         "SUPPORTED_PLATFORMS": '"iphoneos iphonesimulator"',
@@ -460,12 +465,12 @@ def main():
     common_ext = {
         "APPLICATION_EXTENSION_API_ONLY": "YES",
         "CODE_SIGN_STYLE": "Automatic",
-        "CURRENT_PROJECT_VERSION": "4",
+        "CURRENT_PROJECT_VERSION": "5",
         "GENERATE_INFOPLIST_FILE": "NO",
         "INFOPLIST_FILE": q(EXT_INFO_PLIST),
         "IPHONEOS_DEPLOYMENT_TARGET": "17.0",
         "LD_RUNPATH_SEARCH_PATHS": '("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks")',
-        "MARKETING_VERSION": "1.3",
+        "MARKETING_VERSION": "1.4",
         "PRODUCT_BUNDLE_IDENTIFIER": q(EXT_BUNDLE_ID),
         "PRODUCT_NAME": '"$(TARGET_NAME)"',
         "SKIP_INSTALL": "YES",

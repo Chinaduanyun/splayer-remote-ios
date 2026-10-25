@@ -174,6 +174,7 @@ struct LyricPillButton: View {
 
 /// 队列浏览面板：本地搜索 / 过滤当前队列；可控时支持点播（发送一次 playAt，待权威确认）。
 struct QueueSheet: View {
+    var embedded = false
     @EnvironmentObject private var remote: RemoteViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
@@ -227,11 +228,11 @@ struct QueueSheet: View {
                 }
             }
             .searchable(text: $query, prompt: "搜索当前队列")
-            .navigationTitle("播放队列")
+            .navigationTitle("当前队列")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+                    if !embedded { Button("完成") { dismiss() } }
                 }
             }
             .safeAreaInset(edge: .bottom) {

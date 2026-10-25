@@ -144,7 +144,63 @@ final class RemoteViewModel: ObservableObject {
     private var commandTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
-    private var generation = 0
+    @Published private(set) var generation = 0
+    @Published private(set) var discoveryCommandLease: UUID?
+
+    /// Only the captured, successfully connected configuration; never settings drafts.
+    var discoveryConfiguration: ConnectionConfiguration? {
+        connection.isConnected && isSceneActive ? activeConfiguration : nil
+    }
+    func acquireDiscoveryCommand() -> UUID? {
+        guard !queueMutationBlocked, canControl else { return nil }
+        let lease = UUID()
+        discoveryCommandLease = lease
+        return lease
+    }
+    private var queueMutationEpoch = 0
+    private var queueMutationBlocked = false
+    private var resolvedQueueMutationEpoch: Int?
+    private var resolvedQueueMutationGeneration: Int?
+
+    /// Only a matching terminal command observation establishes ordering.
+    func resolveDiscoveryQueueMutation(_ epoch: Int, generation gen: Int) {
+        guard epoch == queueMutationEpoch, gen == generation, isSceneActive else { return }
+        resolvedQueueMutationEpoch = epoch
+        resolvedQueueMutationGeneration = gen
+    }
+
+    func beginDiscoveryQueueMutation(_ lease: UUID) -> Int? {
+        guard discoveryCommandLease == lease else { return nil }
+        queueMutationEpoch += 1
+        resolvedQueueMutationEpoch = nil
+        resolvedQueueMutationGeneration = nil
+        queueMutationBlocked = true
+        queueFreshnessGeneration = -1
+        queueGeneration += 1
+        return queueMutationEpoch
+    }
+
+    /// Await an eligible post-barrier snapshot; failure must not restore old indices.
+    func finishDiscoveryQueueMutation(_ epoch: Int, generation gen: Int) async {
+        guard epoch == queueMutationEpoch, resolvedQueueMutationEpoch == epoch,
+              resolvedQueueMutationGeneration == gen, gen == generation, isSceneActive,
+              connection.isConnected, let client else { return }
+        do {
+            let snapshot = try await client.fetchLanShareQueue()
+            guard epoch == queueMutationEpoch, gen == generation, isSceneActive,
+                  connection.isConnected, !Task.isCancelled, let snapshot else { return }
+            queue = snapshot
+            queueGeneration += 1
+            queueFreshnessGeneration = gen
+            queueMutationBlocked = false
+            metadataState = .available
+            recomputeCurrentTrack()
+        } catch { /* Keep point-play read-only on ambiguous or failed refresh. */ }
+    }
+
+    func releaseDiscoveryCommand(_ lease: UUID) {
+        if discoveryCommandLease == lease { discoveryCommandLease = nil }
+    }
     private var socketGeneration = 0
     private var reconnectAttempt = 0
     private var scenePhase: ScenePhaseState = .active
@@ -251,7 +307,7 @@ final class RemoteViewModel: ObservableObject {
     /// 只有「场景激活 + 已连接 + 非过期 + 无命令在途 + 无待确认点播」时才允许控制，
     /// 后台、数据过期或点播待确认一律禁用不安全控件。
     var canControl: Bool {
-        isSceneActive && connection.isConnected && !isStale && !isCommandInFlight && pendingPlayback == nil
+        isSceneActive && connection.isConnected && !isStale && !isCommandInFlight && pendingPlayback == nil && discoveryCommandLease == nil
     }
 
     /// 仅在已知有效时长时允许跳转。
@@ -262,6 +318,7 @@ final class RemoteViewModel: ObservableObject {
     var canSelectFromQueue: Bool {
         canControl
             && restAvailable
+            && !queueMutationBlocked
             && queueFreshnessGeneration == generation
             && collaborationState == .live
             && metadataState == .available
@@ -275,6 +332,7 @@ final class RemoteViewModel: ObservableObject {
         switch collaborationState {
         case .live:
             if !restAvailable { return "REST 数据已降级，队列暂时只读。" }
+            if queueMutationBlocked { return "队列替换结果需重新确认，当前队列暂只读；请在发现中查询原命令状态。" }
             if queueFreshnessGeneration != generation { return "队列尚未在当前连接中刷新，暂时只读。" }
             return canControl ? "可点播当前队列中的曲目。" : "数据过期或场景不可用，暂时无法点播。"
         case .connecting:
@@ -785,11 +843,16 @@ final class RemoteViewModel: ObservableObject {
 
     /// 手动刷新一次（不启动轮询循环），用于「重试」与测试。
     func refreshNow() async {
+        _ = await pollOnce(expectedGeneration: generation)
+    }
+
+    func refreshPlaybackEvidence() async -> NowPlayingResponse? {
         await pollOnce(expectedGeneration: generation)
     }
 
-    private func pollOnce(expectedGeneration gen: Int) async {
-        guard gen == generation, let client else { return }
+    @discardableResult
+    private func pollOnce(expectedGeneration gen: Int) async -> NowPlayingResponse? {
+        guard gen == generation, let client else { return nil }
         let wsArrivalAtStart = wsArrivalCount
         do {
             async let statusTask = client.fetchStatus()
@@ -797,9 +860,9 @@ final class RemoteViewModel: ObservableObject {
             let (freshStatus, freshNow) = try await (statusTask, nowTask)
 
             // 丢弃过期或后台返回的响应，避免覆盖新连接 / 后台状态。
-            guard gen == generation, isSceneActive, !Task.isCancelled else { return }
+            guard gen == generation, isSceneActive, !Task.isCancelled else { return nil }
             // 已有更新的 WS 快照（含 ended）到达：丢弃这次较早发起的轮询。
-            guard wsArrivalCount == wsArrivalAtStart else { return }
+            guard wsArrivalCount == wsArrivalAtStart else { return nil }
 
             status = freshStatus
             nowPlaying = freshNow
@@ -822,9 +885,10 @@ final class RemoteViewModel: ObservableObject {
             notifyLiveActivity()
             confirmPendingPlayback(songId: freshNow.songId)
             scheduleMetadataCalibrationIfNeeded()
+            return freshNow
         } catch {
-            guard gen == generation, isSceneActive, !Task.isCancelled else { return }
-            if let apiError = error as? RemoteAPIError, case .cancelled = apiError { return }
+            guard gen == generation, isSceneActive, !Task.isCancelled else { return nil }
+            if let apiError = error as? RemoteAPIError, case .cancelled = apiError { return nil }
             if isFatal(error) {
                 // 401/403：连接已失效，停止轮询与 socket 并进入失败态。
                 stopPolling()
@@ -847,6 +911,7 @@ final class RemoteViewModel: ObservableObject {
                 notifyLiveActivity()
             }
         }
+        return nil
     }
 
     private func isFatal(_ error: Error) -> Bool {
@@ -1026,6 +1091,11 @@ final class RemoteViewModel: ObservableObject {
 
     /// 手动刷新元数据（下拉刷新 / 诊断 / 测试）。会等待本次拉取完成。
     func refreshMetadataNow() async {
+        if queueMutationBlocked {
+            guard discoveryCommandLease == nil else { return }
+            await finishDiscoveryQueueMutation(queueMutationEpoch, generation: generation)
+            return
+        }
         if isMetadataFetchInFlight {
             pendingMetadataRefresh = true
             return
@@ -1119,6 +1189,8 @@ final class RemoteViewModel: ObservableObject {
         metadataGeneration += 1
         let requestGen = metadataGeneration
         let connectionGen = generation
+        let mutationEpoch = queueMutationEpoch
+        let eligibleQueueRead = !queueMutationBlocked
         let requestTrackId = songId
         metadataTrackId = requestTrackId
         if metadataState == .idle { metadataState = .loading }
@@ -1135,12 +1207,12 @@ final class RemoteViewModel: ObservableObject {
         }
 
         func isCurrent() -> Bool {
-            requestGen == metadataGeneration && connectionGen == generation && isSceneActive
+            requestGen == metadataGeneration && connectionGen == generation && isSceneActive && mutationEpoch == queueMutationEpoch
         }
 
         do {
             let fetchedQueue = try await client.fetchLanShareQueue()
-            guard isCurrent() else { return }
+            guard isCurrent(), mutationEpoch == queueMutationEpoch, eligibleQueueRead, !queueMutationBlocked else { return }
             lastMetadataAttempt = dateProvider()
             if let fetchedQueue {
                 queue = fetchedQueue
@@ -1157,7 +1229,7 @@ final class RemoteViewModel: ObservableObject {
                 metadataState = .unavailable
             }
         } catch {
-            guard isCurrent() else { return }
+            guard isCurrent(), mutationEpoch == queueMutationEpoch, eligibleQueueRead, !queueMutationBlocked else { return }
             lastMetadataAttempt = dateProvider()
             clearMetadataPresentation()
             queueGeneration += 1
