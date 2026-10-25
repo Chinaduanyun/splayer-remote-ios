@@ -10,6 +10,7 @@ build/
 
 # 私有工作笔记与上游参考源码不公开
 IMPLEMENTATION.md
+UPGRADE-PLAN.md
 reference/
 .pi/
 *.xcresult/

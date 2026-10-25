@@ -146,6 +146,76 @@ final class MockURLProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+// MARK: - Mock WebSocket
+
+/// 确定性 mock socket：可注入消息、模拟远端关闭、记录 start/stop。
+final class MockRemoteSocket: RemoteSocket {
+    private(set) var state: RemoteSocketState = .idle
+    var onMessage: ((RemoteSocketMessage) -> Void)?
+    var onStateChange: ((RemoteSocketState) -> Void)?
+
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    /// `start()` 时是否自动进入 open 状态。
+    var autoOpen = true
+
+    func start() {
+        startCount += 1
+        state = .connecting
+        onStateChange?(.connecting)
+        if autoOpen {
+            state = .open
+            onStateChange?(.open)
+        }
+    }
+
+    func stop() {
+        stopCount += 1
+        state = .closed
+    }
+
+    /// 模拟对端主动关闭（会通知状态变化）。
+    func simulateRemoteClose() {
+        state = .closed
+        onStateChange?(.closed)
+    }
+
+    /// 注入一条消息。
+    func emit(_ message: RemoteSocketMessage) {
+        onMessage?(message)
+    }
+}
+
+/// 记录创建的 socket，便于断言「单连接 / 有界重连」以及重连使用的配置。
+final class MockSocketFactory {
+    private(set) var sockets: [MockRemoteSocket] = []
+    private(set) var requestedBaseURLs: [URL] = []
+    private(set) var requestedTokens: [String] = []
+    var autoOpen = true
+    var configure: ((MockRemoteSocket) -> Void)?
+
+    var latest: MockRemoteSocket? { sockets.last }
+
+    func make() -> RemoteSocketFactory {
+        { [weak self] baseURL, token in
+            let socket = MockRemoteSocket()
+            socket.autoOpen = self?.autoOpen ?? true
+            self?.requestedBaseURLs.append(baseURL)
+            self?.requestedTokens.append(token)
+            self?.configure?(socket)
+            self?.sockets.append(socket)
+            return socket
+        }
+    }
+}
+
+/// 可控单调时钟，用于确定性验证平滑进度。
+final class TestMonotonicClock {
+    var now: TimeInterval
+    init(now: TimeInterval = 1_000) { self.now = now }
+    func advance(_ seconds: TimeInterval) { now += seconds }
+}
+
 enum TestSession {
     static func make() -> URLSession {
         let config = URLSessionConfiguration.ephemeral

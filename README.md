@@ -3,10 +3,18 @@
 面向 **SPlayer for Android Next** 的原生 SwiftUI iPhone 遥控器。它是一个**独立应用**，
 与 SPlayer 官方项目没有隶属关系，也不使用其品牌素材。
 
-- 单一「正在播放」面板 + 悬浮玻璃交通控制簇
+- 单一「正在播放」面板 + 悬浮玻璃交通控制簇（主播放按钮更大、次控制分组）
 - iOS 26 使用真正的 Liquid Glass（`.glassEffect` / `.buttonStyle(.glass)`），
   iOS 17–25 自动退回 `Material` 玻璃质感
-- 轮询播放状态（约 2 秒），支持播放 / 暂停 / 停止 / 上一曲 / 下一曲 / 跳转 / 音量
+- HTTP 轮询始终保留（回退约 2 秒，实时通道活跃时约 5 秒校准）
+- 可选只读实时通道：`ws://host:port/ws/external`（`X-SPlayer-Token` 请求头），
+  不可用时自动回退 HTTP，**不影响控制**；带 ping 与有界退避重连
+- 平滑进度：本地单调时钟外推（暂停 / 过期 / 后台冻结），`TimelineView` 本地重绘，
+  拖动仅本地预览、松手才上报；－15 秒 / 开头 / ＋15 秒快捷跳转、剩余时间切换
+- 音量：静音 / 恢复上一非零音量、±5% 步进、25/50/75/100 预设（控制 Android 端播放音量，非系统音量）
+- 诊断面板：应用版本、REST 可用性、传输状态、WS 客户端数、倍速 / 缓冲 / 歌曲 ID、
+  最近成功更新时间；不显示 Token / `src` / 原始 JSON
+- 支持播放 / 暂停 / 停止 / 上一曲 / 下一曲 / 跳转 / 音量
 - Token 存放于 **系统钥匙串**；主机与端口存于 `UserDefaults`
 - 温暖深色背景 + 克制的橙色强调，中文界面，支持动态字体与「减弱动态效果」
 
@@ -46,11 +54,13 @@ SPlayerRemote.xcodeproj/        由脚本生成的真实 Xcode 工程（含共�
 SPlayerRemote/
   App/            SPlayerRemoteApp.swift
   Models/         RemoteModels.swift（解码模型，忽略 src）
+                  RemoteEvents.swift（WebSocket 事件容错解码）
   Networking/     HostValidator / APIRequestFactory / RemoteAPIClient / RemoteAPIError
+                  WebSocketTransport.swift（可测试抽象 + URLSessionWebSocketTask 实现）
   Security/       KeychainStore.swift（钥匙串 Token 存储）
-  Persistence/    SettingsStore.swift（只持久化 host/port）
-  ViewModels/     RemoteViewModel.swift（轮询 / 命令互斥 / 世代隔离）
-  Views/          GlassSupport / Components / RootView / SettingsView
+  Persistence/    SettingsStore.swift（只持久化 host/port 与连接偏好）
+  ViewModels/     RemoteViewModel.swift（轮询 / 命令互斥 / 世代隔离 / 实时通道 / 进度锚点）
+  Views/          GlassSupport / Components / RootView / SettingsView / DiagnosticsView
   Resources/      Assets.xcassets（AppIcon / AccentColor）
   Info.plist
 SPlayerRemoteTests/             聚焦的协议 / 请求契约 / 状态机测试
@@ -170,7 +180,7 @@ python3 mockserver/mock_server.py --host 0.0.0.0 --port 6688 --token devtoken
 已执行（Linux，无需 Xcode）：
 
 ```bash
-python3 scripts/validate_project.py   # 结构一致性（51 项通过）
+python3 scripts/validate_project.py   # 结构一致性（60 项通过）
 python3 -m py_compile scripts/*.py mockserver/mock_server.py
 bash -n scripts/build_unsigned.sh
 python3 mockserver/mock_server.py ... # 用 curl 验证端点 / 鉴权 / 400
@@ -202,3 +212,8 @@ iOS 26 Liquid Glass 的具体 API 名称 / 签名（`.glassEffect(_:in:)`、`.bu
   `now-playing` 忽略 `src`，音量越界钳制。
 - `SettingsStoreTests`：host/port 持久化、Token 不入 `UserDefaults`、钥匙串失败上报、清除 Token。
 - `RemoteViewModelTests`：连接成功 / 失败、未连接时命令被忽略、命令互斥、音量与跳转钳制。
+- `RemoteSocketTests`：hello / stateChanged / ended / ack / error 解码，未知与非法事件忽略，
+  `src` 不入模型，WS 请求路径与鉴权头（Token 不入 URL），wss 推导。
+- `RemoteViewModelWebSocketTests`：实时通道应用快照、未知消息忽略、断开回退与有界重连、
+  关闭偏好不建连、后台 / 断开后迟到回调丢弃、早于 WS 的轮询结果丢弃、
+  平滑进度播放推进 / 暂停 / 过期 / 后台冻结、跳转与音量快捷操作（单次请求、不自动重试）。

@@ -8,7 +8,10 @@ struct SPlayerRemoteApp: App {
     init() {
         let settings = SettingsStore()
         _settings = StateObject(wrappedValue: settings)
-        _remote = StateObject(wrappedValue: RemoteViewModel(settings: settings))
+        _remote = StateObject(wrappedValue: RemoteViewModel(
+            settings: settings,
+            socketFactory: URLSessionWebSocketTransport.makeFactory()
+        ))
     }
 
     var body: some Scene {

@@ -74,4 +74,90 @@ final class SettingsStoreTests: XCTestCase {
         store.host = "http://evil.example"
         XCTAssertThrowsError(try store.makeBaseURL())
     }
+
+    // MARK: - 不可变配置 / 原子保存
+
+    func testMakeConfigurationUsesCommittedValues() throws {
+        let store = SettingsStore(defaults: makeDefaults(), tokenStore: InMemoryTokenStore(stored: "tok"))
+        store.host = "192.168.31.100"
+        store.portText = "6688"
+        store.useWebSocket = true
+
+        let configuration = try store.makeConfiguration()
+        XCTAssertEqual(configuration.baseURL.absoluteString, "http://192.168.31.100:6688/api/external")
+        XCTAssertEqual(configuration.token, "tok")
+        XCTAssertTrue(configuration.useWebSocket)
+    }
+
+    func testSaveConfigurationCommitsAndPersistsPreferences() throws {
+        let defaults = makeDefaults()
+        let tokenStore = InMemoryTokenStore()
+        let store = SettingsStore(defaults: defaults, tokenStore: tokenStore)
+
+        try store.saveConfiguration(
+            host: "192.168.31.100",
+            portText: "7000",
+            token: "newtoken",
+            useWebSocket: false,
+            autoConnect: true
+        )
+
+        XCTAssertEqual(store.host, "192.168.31.100")
+        XCTAssertEqual(store.portText, "7000")
+        XCTAssertEqual(store.token, "newtoken")
+        XCTAssertFalse(store.useWebSocket)
+        XCTAssertTrue(store.autoConnect)
+        XCTAssertEqual(tokenStore.stored, "newtoken")
+        XCTAssertTrue(store.hasSavedConnection)
+
+        let reloaded = SettingsStore(defaults: defaults, tokenStore: tokenStore)
+        XCTAssertEqual(reloaded.host, "192.168.31.100")
+        XCTAssertEqual(reloaded.portText, "7000")
+        XCTAssertFalse(reloaded.useWebSocket)
+        XCTAssertTrue(reloaded.autoConnect)
+    }
+
+    func testSaveConfigurationKeychainFailureCommitsNothing() {
+        let defaults = makeDefaults()
+        let tokenStore = InMemoryTokenStore(stored: "old")
+        let store = SettingsStore(defaults: defaults, tokenStore: tokenStore)
+        store.host = "192.168.31.100"
+        store.portText = "6688"
+        store.token = "old"
+        store.persistConnectionSettings()
+
+        tokenStore.saveShouldFail = true
+        XCTAssertThrowsError(try store.saveConfiguration(
+            host: "10.0.0.9",
+            portText: "9000",
+            token: "leaked",
+            useWebSocket: false,
+            autoConnect: true
+        ))
+
+        // 未保存的 host/token 不得泄漏到已保存配置。
+        XCTAssertEqual(store.host, "192.168.31.100")
+        XCTAssertEqual(store.portText, "6688")
+        XCTAssertEqual(store.token, "old")
+        XCTAssertEqual(tokenStore.stored, "old")
+        XCTAssertNotNil(store.keychainError)
+        let persistedHost = defaults.string(forKey: SettingsStore.Keys.host)
+        XCTAssertEqual(persistedHost, "192.168.31.100")
+    }
+
+    func testSaveConfigurationInvalidHostCommitsNothing() {
+        let store = SettingsStore(defaults: makeDefaults(), tokenStore: InMemoryTokenStore(stored: "old"))
+        store.host = "192.168.31.100"
+        store.portText = "6688"
+
+        XCTAssertThrowsError(try store.saveConfiguration(
+            host: "http://evil",
+            portText: "6688",
+            token: "leaked",
+            useWebSocket: true,
+            autoConnect: false
+        ))
+        XCTAssertEqual(store.host, "192.168.31.100")
+        XCTAssertNotEqual(store.token, "leaked")
+    }
 }

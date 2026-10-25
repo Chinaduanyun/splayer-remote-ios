@@ -3,9 +3,11 @@ import SwiftUI
 /// 主界面：单一「正在播放」面板 + 悬浮玻璃交通控制簇。
 struct RootView: View {
     @EnvironmentObject private var remote: RemoteViewModel
+    @EnvironmentObject private var settings: SettingsStore
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showSettings = false
+    @State private var showDiagnostics = false
 
     var body: some View {
         ZStack {
@@ -19,7 +21,7 @@ struct RootView: View {
                         PlaybackStatusPanel()
                         TransportCluster()
                     } else {
-                        EmptyStatePanel()
+                        EmptyStatePanel(onOpenSettings: { showSettings = true })
                     }
 
                     if let error = remote.lastError {
@@ -34,13 +36,27 @@ struct RootView: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollBounceBehavior(.basedOnSize)
+            .refreshable { await remote.refreshNow() }
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
+        .sheet(isPresented: $showDiagnostics) {
+            DiagnosticsView()
+        }
         .onChange(of: scenePhase) { _, phase in
-            remote.setSceneActive(phase == .active)
+            let active = phase == .active
+            remote.setSceneActive(active)
+            if active, !showSettings {
+                Task { await remote.connectIfConfigured() }
+            }
+        }
+        .task {
+            // 启动时仅在用户显式开启自动连接且有可用配置时连接。
+            if !showSettings {
+                await remote.connectIfConfigured()
+            }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: remote.connection)
     }
@@ -55,7 +71,21 @@ struct RootView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            ConnectionBadge(state: remote.connection)
+            ConnectionBadge(
+                state: remote.connection,
+                isStale: remote.isStale,
+                transport: remote.transport
+            )
+
+            Button {
+                showDiagnostics = true
+            } label: {
+                Image(systemName: "waveform.path.ecg")
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("诊断")
 
             Button {
                 showSettings = true
@@ -73,10 +103,11 @@ struct RootView: View {
         VStack(spacing: 6) {
             if case .connected = remote.connection {
                 Button {
-                    remote.disconnect()
+                    remote.disconnectByUser()
                 } label: {
                     Label("断开连接", systemImage: "wifi.slash")
                         .font(.footnote)
+                        .frame(minHeight: 44)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
@@ -88,10 +119,10 @@ struct RootView: View {
     }
 }
 
-/// 未连接时的引导面板。
+/// 未连接时的引导面板。设置入口由父视图统一持有，保证自动连接抑制对两个入口一致生效。
 private struct EmptyStatePanel: View {
     @EnvironmentObject private var remote: RemoteViewModel
-    @State private var showSettings = false
+    let onOpenSettings: () -> Void
 
     var body: some View {
         VStack(spacing: 16) {
@@ -119,7 +150,7 @@ private struct EmptyStatePanel: View {
 
             HStack(spacing: 12) {
                 GlassTransportButton(systemImage: "gearshape", label: "打开设置", prominent: true) {
-                    showSettings = true
+                    onOpenSettings()
                 }
                 Button {
                     Task { await remote.connect() }
@@ -136,7 +167,6 @@ private struct EmptyStatePanel: View {
         .padding(26)
         .frame(maxWidth: .infinity)
         .glassPanel()
-        .sheet(isPresented: $showSettings) { SettingsView() }
     }
 }
 

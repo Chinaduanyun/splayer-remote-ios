@@ -21,11 +21,13 @@ extension View {
 }
 
 /// 交通控制按钮：iOS 26 使用 `.glass`，旧系统使用 bordered 系列。
+/// 所有按钮命中区 ≥44pt；主控制可设为 `large` 以突出层级。
 struct GlassTransportButton: View {
     let systemImage: String
     let label: String
     var prominent: Bool = false
     var enabled: Bool = true
+    var large: Bool = false
     let action: () -> Void
 
     var body: some View {
@@ -42,11 +44,14 @@ struct GlassTransportButton: View {
         }
     }
 
+    private var side: CGFloat { large ? 72 : 44 }
+    private var iconSize: CGFloat { large ? 34 : 22 }
+
     private var button: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 22, weight: .semibold))
-                .frame(minWidth: 44, minHeight: 44)
+                .font(.system(size: iconSize, weight: .semibold))
+                .frame(minWidth: side, minHeight: side)
                 .contentShape(Rectangle())
         }
         .tint(prominent ? Theme.accent : Theme.accent.opacity(0.9))

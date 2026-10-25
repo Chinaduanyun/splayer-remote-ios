@@ -1,10 +1,20 @@
 import SwiftUI
 
 /// 设置面板：主机、端口、Token、测试连接，以及安全说明。
+///
+/// 字段使用**本地草稿**，只有「保存并连接」成功写入钥匙串后才提交到已保存配置。
+/// 这样编辑中的 host / Token 不会泄漏给后台重连或自动连接。
 struct SettingsView: View {
     @EnvironmentObject private var settings: SettingsStore
     @EnvironmentObject private var remote: RemoteViewModel
     @Environment(\.dismiss) private var dismiss
+
+    @State private var hostDraft = ""
+    @State private var portDraft = ""
+    @State private var tokenDraft = ""
+    @State private var useWebSocketDraft = true
+    @State private var autoConnectDraft = false
+    @State private var didLoadDrafts = false
 
     @State private var validationMessage: String?
     @State private var isWorking = false
@@ -13,12 +23,12 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("主机名或 IP", text: $settings.host)
+                    TextField("主机名或 IP", text: $hostDraft)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
                         .accessibilityLabel("主机")
-                    TextField("端口", text: $settings.portText)
+                    TextField("端口", text: $portDraft)
                         .keyboardType(.numberPad)
                         .accessibilityLabel("端口")
                 } header: {
@@ -28,7 +38,16 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    SecureField("访问令牌", text: $settings.token)
+                    Toggle("实时状态（WebSocket）", isOn: $useWebSocketDraft)
+                    Toggle("启动时自动连接", isOn: $autoConnectDraft)
+                } header: {
+                    Text("连接偏好")
+                } footer: {
+                    Text("启用后会尝试建立只读实时通道；不可用时自动回退到 HTTP 轮询，不影响控制。自动连接仅在已保存有效主机与令牌时生效。")
+                }
+
+                Section {
+                    SecureField("访问令牌", text: $tokenDraft)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityLabel("访问令牌")
@@ -91,7 +110,18 @@ struct SettingsView: View {
                     Button("完成") { dismiss() }
                 }
             }
+            .onAppear(perform: loadDraftsIfNeeded)
         }
+    }
+
+    private func loadDraftsIfNeeded() {
+        guard !didLoadDrafts else { return }
+        didLoadDrafts = true
+        hostDraft = settings.host
+        portDraft = settings.portText
+        tokenDraft = settings.token
+        useWebSocketDraft = settings.useWebSocket
+        autoConnectDraft = settings.autoConnect
     }
 
     private func saveAndConnect() async {
@@ -99,16 +129,15 @@ struct SettingsView: View {
         isWorking = true
         defer { isWorking = false }
 
+        // 原子提交：先写钥匙串，成功后再更新已保存配置。失败不改变任何已保存值。
         do {
-            _ = try settings.makeBaseURL()
-        } catch {
-            validationMessage = remote.message(for: error)
-            return
-        }
-
-        settings.persistConnectionSettings()
-        do {
-            try settings.persistToken()
+            try settings.saveConfiguration(
+                host: hostDraft,
+                portText: portDraft,
+                token: tokenDraft,
+                useWebSocket: useWebSocketDraft,
+                autoConnect: autoConnectDraft
+            )
         } catch {
             validationMessage = remote.message(for: error)
             return
@@ -123,6 +152,7 @@ struct SettingsView: View {
     private func clearToken() {
         do {
             try settings.clearToken()
+            tokenDraft = ""
             validationMessage = nil
         } catch {
             validationMessage = remote.message(for: error)

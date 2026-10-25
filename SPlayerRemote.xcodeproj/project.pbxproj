@@ -17,6 +17,12 @@
 			path = "SPlayerRemote/Models/RemoteModels.swift";
 			sourceTree = "<group>";
 		};
+		9B53EBE65A90D39F950AF4AD = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemote/Models/RemoteEvents.swift";
+			sourceTree = "<group>";
+		};
 		1E1874F37AD5B9CD73D988B5 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -39,6 +45,12 @@
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
 			path = "SPlayerRemote/Networking/RemoteAPIClient.swift";
+			sourceTree = "<group>";
+		};
+		965DBC1833D682850E4B3714 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemote/Networking/WebSocketTransport.swift";
 			sourceTree = "<group>";
 		};
 		A9E632176E540DF79606D63A = {
@@ -83,6 +95,12 @@
 			path = "SPlayerRemote/Views/SettingsView.swift";
 			sourceTree = "<group>";
 		};
+		272C4550EA566FEB98516FCE = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemote/Views/DiagnosticsView.swift";
+			sourceTree = "<group>";
+		};
 		88B0AA3523551978E3379768 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -119,6 +137,24 @@
 			path = "SPlayerRemoteTests/RemoteViewModelTests.swift";
 			sourceTree = "<group>";
 		};
+		EA3C32A336FA5582EF89EBC9 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemoteTests/RemoteSocketTests.swift";
+			sourceTree = "<group>";
+		};
+		A97AE3D40C4AA6E20A936901 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemoteTests/RemoteViewModelWebSocketTests.swift";
+			sourceTree = "<group>";
+		};
+		D1477DE44C6B9C53568C6E70 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemoteTests/WebSocketTransportTests.swift";
+			sourceTree = "<group>";
+		};
 		6316458738A4F146D22011C9 = {
 			isa = PBXFileReference;
 			lastKnownFileType = folder.assetcatalog;
@@ -153,6 +189,10 @@
 			isa = PBXBuildFile;
 			fileRef = 6337A7AF609E8221FC87E10F /* RemoteModels.swift */;
 		};
+		0464D1428006AA3727605446 = {
+			isa = PBXBuildFile;
+			fileRef = 9B53EBE65A90D39F950AF4AD /* RemoteEvents.swift */;
+		};
 		9417F70C73997A67B4C6BABF = {
 			isa = PBXBuildFile;
 			fileRef = 1E1874F37AD5B9CD73D988B5 /* RemoteAPIError.swift */;
@@ -168,6 +208,10 @@
 		AEC64A11FB20C67539E78B81 = {
 			isa = PBXBuildFile;
 			fileRef = 6461D2940EAF8890CFBFE049 /* RemoteAPIClient.swift */;
+		};
+		F59E4F86284EC48479F1AF83 = {
+			isa = PBXBuildFile;
+			fileRef = 965DBC1833D682850E4B3714 /* WebSocketTransport.swift */;
 		};
 		F3B74E363D27F3C57893F495 = {
 			isa = PBXBuildFile;
@@ -197,6 +241,10 @@
 			isa = PBXBuildFile;
 			fileRef = 9039B7E66CC6003C28D07B76 /* SettingsView.swift */;
 		};
+		C06BC8AE000652FDF1239331 = {
+			isa = PBXBuildFile;
+			fileRef = 272C4550EA566FEB98516FCE /* DiagnosticsView.swift */;
+		};
 		972A0A2912F551E63CD33C23 = {
 			isa = PBXBuildFile;
 			fileRef = 6316458738A4F146D22011C9 /* Assets.xcassets */;
@@ -225,15 +273,29 @@
 			isa = PBXBuildFile;
 			fileRef = 47035B9EA84313593B0A7CFE /* RemoteViewModelTests.swift */;
 		};
+		82E31F1EC7D00A6DC4F7F7E4 = {
+			isa = PBXBuildFile;
+			fileRef = EA3C32A336FA5582EF89EBC9 /* RemoteSocketTests.swift */;
+		};
+		61E24D800853C069DE4BEC1C = {
+			isa = PBXBuildFile;
+			fileRef = A97AE3D40C4AA6E20A936901 /* RemoteViewModelWebSocketTests.swift */;
+		};
+		6A3F2922509FCF2526F07A21 = {
+			isa = PBXBuildFile;
+			fileRef = D1477DE44C6B9C53568C6E70 /* WebSocketTransportTests.swift */;
+		};
 		82CF2A43A7100F086D7FCFDD = {
 			isa = PBXGroup;
 			children = (
 				9D181686504E68AFB29ADAA7,
 				6337A7AF609E8221FC87E10F,
+				9B53EBE65A90D39F950AF4AD,
 				1E1874F37AD5B9CD73D988B5,
 				72CF6A32E4F43515FA7A6226,
 				310788BC488B8A2BE1C7A402,
 				6461D2940EAF8890CFBFE049,
+				965DBC1833D682850E4B3714,
 				A9E632176E540DF79606D63A,
 				4B88196A8F529D211998B1AA,
 				7C2B7F0475F6B90BF118074E,
@@ -241,6 +303,7 @@
 				F5115F8071A0AE3C24008A48,
 				9C9BDFF776C66A6658DE10C6,
 				9039B7E66CC6003C28D07B76,
+				272C4550EA566FEB98516FCE,
 				6316458738A4F146D22011C9,
 				73764CAC5E1342BF8692E66B,
 			);
@@ -256,6 +319,9 @@
 				77ED00A9F7E36A5365EEB8CD,
 				2F1CB4A170F772AE486AB0F7,
 				47035B9EA84313593B0A7CFE,
+				EA3C32A336FA5582EF89EBC9,
+				A97AE3D40C4AA6E20A936901,
+				D1477DE44C6B9C53568C6E70,
 			);
 			name = "SPlayerRemoteTests";
 			sourceTree = "<group>";
@@ -284,10 +350,12 @@
 			files = (
 				021B978058974C0B986BE53F /* SPlayerRemoteApp.swift */,
 				B8280F2BDA1E529ECEBDC993 /* RemoteModels.swift */,
+				0464D1428006AA3727605446 /* RemoteEvents.swift */,
 				9417F70C73997A67B4C6BABF /* RemoteAPIError.swift */,
 				A16EBFCCD16C488DABFC6685 /* HostValidator.swift */,
 				C8F0251B9B82FA5DCEDAD139 /* APIRequestFactory.swift */,
 				AEC64A11FB20C67539E78B81 /* RemoteAPIClient.swift */,
+				F59E4F86284EC48479F1AF83 /* WebSocketTransport.swift */,
 				F3B74E363D27F3C57893F495 /* KeychainStore.swift */,
 				CD226F39918AA813B205B8FF /* SettingsStore.swift */,
 				EB3C187B64C9FD78BED72806 /* RemoteViewModel.swift */,
@@ -295,6 +363,7 @@
 				3ED2BF2AE759547B6C0A6E68 /* Components.swift */,
 				689AD35A1038D20667A03DF0 /* RootView.swift */,
 				5C185E9B6B4F4C92BFFB6D20 /* SettingsView.swift */,
+				C06BC8AE000652FDF1239331 /* DiagnosticsView.swift */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -323,6 +392,9 @@
 				ED579140F37B964DC9C49D41 /* RemoteAPIClientTests.swift */,
 				90444715F1ED08BE90F8A266 /* SettingsStoreTests.swift */,
 				23298C9B7ECA42911635EBAE /* RemoteViewModelTests.swift */,
+				82E31F1EC7D00A6DC4F7F7E4 /* RemoteSocketTests.swift */,
+				61E24D800853C069DE4BEC1C /* RemoteViewModelWebSocketTests.swift */,
+				6A3F2922509FCF2526F07A21 /* WebSocketTransportTests.swift */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -487,13 +559,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "SPlayerRemote/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -509,13 +581,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "SPlayerRemote/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -530,10 +602,10 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote.tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -549,10 +621,10 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote.tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

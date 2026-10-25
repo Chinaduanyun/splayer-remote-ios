@@ -23,10 +23,12 @@ BUNDLE_ID = "com.example.splayerremote"
 APP_SOURCES = [
     "SPlayerRemote/App/SPlayerRemoteApp.swift",
     "SPlayerRemote/Models/RemoteModels.swift",
+    "SPlayerRemote/Models/RemoteEvents.swift",
     "SPlayerRemote/Networking/RemoteAPIError.swift",
     "SPlayerRemote/Networking/HostValidator.swift",
     "SPlayerRemote/Networking/APIRequestFactory.swift",
     "SPlayerRemote/Networking/RemoteAPIClient.swift",
+    "SPlayerRemote/Networking/WebSocketTransport.swift",
     "SPlayerRemote/Security/KeychainStore.swift",
     "SPlayerRemote/Persistence/SettingsStore.swift",
     "SPlayerRemote/ViewModels/RemoteViewModel.swift",
@@ -34,6 +36,7 @@ APP_SOURCES = [
     "SPlayerRemote/Views/Components.swift",
     "SPlayerRemote/Views/RootView.swift",
     "SPlayerRemote/Views/SettingsView.swift",
+    "SPlayerRemote/Views/DiagnosticsView.swift",
 ]
 
 APP_RESOURCES = [
@@ -47,6 +50,9 @@ TEST_SOURCES = [
     "SPlayerRemoteTests/RemoteAPIClientTests.swift",
     "SPlayerRemoteTests/SettingsStoreTests.swift",
     "SPlayerRemoteTests/RemoteViewModelTests.swift",
+    "SPlayerRemoteTests/RemoteSocketTests.swift",
+    "SPlayerRemoteTests/RemoteViewModelWebSocketTests.swift",
+    "SPlayerRemoteTests/WebSocketTransportTests.swift",
 ]
 
 INFO_PLIST = "SPlayerRemote/Info.plist"
@@ -311,13 +317,13 @@ def main():
         "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
         "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "AccentColor",
         "CODE_SIGN_STYLE": "Automatic",
-        "CURRENT_PROJECT_VERSION": "1",
+        "CURRENT_PROJECT_VERSION": "2",
         "ENABLE_PREVIEWS": "YES",
         "GENERATE_INFOPLIST_FILE": "NO",
         "INFOPLIST_FILE": q(INFO_PLIST),
         "IPHONEOS_DEPLOYMENT_TARGET": "17.0",
         "LD_RUNPATH_SEARCH_PATHS": '("$(inherited)", "@executable_path/Frameworks")',
-        "MARKETING_VERSION": "1.0",
+        "MARKETING_VERSION": "1.1",
         "PRODUCT_BUNDLE_IDENTIFIER": q(BUNDLE_ID),
         "PRODUCT_NAME": '"$(TARGET_NAME)"',
         "SUPPORTED_PLATFORMS": '"iphoneos iphonesimulator"',
@@ -328,10 +334,10 @@ def main():
     common_tests = {
         "BUNDLE_LOADER": '"$(TEST_HOST)"',
         "CODE_SIGN_STYLE": "Automatic",
-        "CURRENT_PROJECT_VERSION": "1",
+        "CURRENT_PROJECT_VERSION": "2",
         "GENERATE_INFOPLIST_FILE": "YES",
         "IPHONEOS_DEPLOYMENT_TARGET": "17.0",
-        "MARKETING_VERSION": "1.0",
+        "MARKETING_VERSION": "1.1",
         "PRODUCT_BUNDLE_IDENTIFIER": q(BUNDLE_ID + ".tests"),
         "PRODUCT_NAME": '"$(TARGET_NAME)"',
         "SUPPORTED_PLATFORMS": '"iphoneos iphonesimulator"',
