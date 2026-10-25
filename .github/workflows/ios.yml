@@ -1,8 +1,6 @@
 name: iOS build and tests
 on:
   workflow_dispatch:
-  push:
-    branches: [master]
 permissions:
   contents: read
 concurrency:
@@ -30,7 +28,7 @@ jobs:
           name: SPlayerRemote-UNSIGNED-not-directly-installable
           path: build/SPlayerRemote-unsigned.ipa
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 1
       - name: Simulator tests
         timeout-minutes: 10
         run: |
@@ -44,4 +42,4 @@ jobs:
         with:
           name: build-diagnostics
           path: test.log
-          retention-days: 3
+          retention-days: 1
