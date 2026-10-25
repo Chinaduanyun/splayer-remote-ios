@@ -245,7 +245,6 @@
 				73764CAC5E1342BF8692E66B,
 			);
 			name = "SPlayerRemote";
-			path = "SPlayerRemote";
 			sourceTree = "<group>";
 		};
 		A0937472EE5878FA82CB0F7E = {
@@ -259,7 +258,6 @@
 				47035B9EA84313593B0A7CFE,
 			);
 			name = "SPlayerRemoteTests";
-			path = "SPlayerRemoteTests";
 			sourceTree = "<group>";
 		};
 		547D009064F7C3F13BEF3460 = {

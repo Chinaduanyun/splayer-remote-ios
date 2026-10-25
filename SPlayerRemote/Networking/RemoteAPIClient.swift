@@ -56,7 +56,8 @@ final class RemoteAPIClient: RemoteAPI {
     }
 
     func send(command: RemoteCommand) async throws {
-        _ = try await perform(APIRequestFactory.command(command, baseURL: baseURL, token: token))
+        let data = try await perform(APIRequestFactory.command(command, baseURL: baseURL, token: token))
+        try requireAcknowledgement(data)
     }
 
     func seek(positionMs: Int) async throws {
@@ -64,7 +65,8 @@ final class RemoteAPIClient: RemoteAPI {
             throw RemoteAPIError.invalidConfiguration("跳转位置必须大于等于 0。")
         }
         let request = try APIRequestFactory.seek(positionMs: positionMs, baseURL: baseURL, token: token)
-        _ = try await perform(request)
+        let data = try await perform(request)
+        try requireAcknowledgement(data)
     }
 
     func setVolume(_ volume: Double) async throws {
@@ -73,7 +75,8 @@ final class RemoteAPIClient: RemoteAPI {
         }
         let clamped = min(max(volume, 0), 1)
         let request = try APIRequestFactory.volume(clamped, baseURL: baseURL, token: token)
-        _ = try await perform(request)
+        let data = try await perform(request)
+        try requireAcknowledgement(data)
     }
 
     // MARK: - 内部
@@ -113,6 +116,19 @@ final class RemoteAPIClient: RemoteAPI {
             throw RemoteAPIError.decoding
         }
     }
+
+    /// 控制类接口（play/pause/stop/next/prev/seek/volume）必须显式返回 `{ok:true}`。
+    /// 仅凭 2xx 不能认定操作被接受。
+    private func requireAcknowledgement(_ data: Data) throws {
+        guard let ack = try? JSONDecoder().decode(CommandAcknowledgement.self, from: data), ack.ok else {
+            throw RemoteAPIError.unexpectedResponse
+        }
+    }
+}
+
+/// 上游控制类接口的成功响应体：`{ "ok": true }`。
+private struct CommandAcknowledgement: Decodable {
+    let ok: Bool
 }
 
 /// 拒绝一切 HTTP 重定向：返回 nil 后 URLSession 会把 3xx 原样返回给调用方，

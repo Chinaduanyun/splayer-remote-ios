@@ -176,8 +176,10 @@ def main():
 
     app_children = [file_refs[p] for p in APP_SOURCES] + [file_refs[p] for p in APP_RESOURCES] + [info_ref]
     tests_children = [file_refs[p] for p in TEST_SOURCES]
-    group(app_group, APP_TARGET, app_children, path=APP_TARGET)
-    group(tests_group, TEST_TARGET, tests_children, path=TEST_TARGET)
+    # File references already contain paths relative to SOURCE_ROOT. Named groups
+    # must not add the target directory a second time.
+    group(app_group, APP_TARGET, app_children)
+    group(tests_group, TEST_TARGET, tests_children)
     group(products_group, "Products", [app_product, test_product])
     group(main_group, None, [app_group, tests_group, products_group])
 

@@ -28,27 +28,77 @@ final class MockRemoteAPI: RemoteAPI {
     var seekResult: Result<Void, Error> = .success(())
     var volumeResult: Result<Void, Error> = .success(())
 
+    /// 可选的异步「挂起」钩子，用于确定性地测试延迟返回 / 取消 / 后台场景。
+    var infoDelay: (() async -> Void)?
+    var statusDelay: (() async -> Void)?
+    var nowPlayingDelay: (() async -> Void)?
+    var commandDelay: (() async -> Void)?
+    var seekDelay: (() async -> Void)?
+    var volumeDelay: (() async -> Void)?
+
+    private(set) var infoCallCount = 0
+    private(set) var statusCallCount = 0
+    private(set) var nowPlayingCallCount = 0
     private(set) var sentCommands: [RemoteCommand] = []
     private(set) var soughtPositions: [Int] = []
     private(set) var setVolumes: [Double] = []
 
-    func fetchInfo() async throws -> InfoResponse { try infoResult.get() }
-    func fetchStatus() async throws -> StatusResponse { try statusResult.get() }
-    func fetchNowPlaying() async throws -> NowPlayingResponse { try nowPlayingResult.get() }
+    func fetchInfo() async throws -> InfoResponse {
+        infoCallCount += 1
+        if let infoDelay { await infoDelay() }
+        return try infoResult.get()
+    }
+
+    func fetchStatus() async throws -> StatusResponse {
+        statusCallCount += 1
+        if let statusDelay { await statusDelay() }
+        return try statusResult.get()
+    }
+
+    func fetchNowPlaying() async throws -> NowPlayingResponse {
+        nowPlayingCallCount += 1
+        if let nowPlayingDelay { await nowPlayingDelay() }
+        return try nowPlayingResult.get()
+    }
 
     func send(command: RemoteCommand) async throws {
         sentCommands.append(command)
+        if let commandDelay { await commandDelay() }
         try commandResult.get()
     }
 
     func seek(positionMs: Int) async throws {
         soughtPositions.append(positionMs)
+        if let seekDelay { await seekDelay() }
         try seekResult.get()
     }
 
     func setVolume(_ volume: Double) async throws {
         setVolumes.append(volume)
+        if let volumeDelay { await volumeDelay() }
         try volumeResult.get()
+    }
+}
+
+// MARK: - 异步闸门（确定性 hold/release）
+
+/// `wait()` 会挂起直到 `open()` 被调用；`open()` 后可重复通过。
+actor AsyncGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let pending = waiters
+        waiters.removeAll()
+        for continuation in pending { continuation.resume() }
     }
 }
 

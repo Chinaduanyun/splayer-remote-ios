@@ -122,6 +122,71 @@ final class RemoteAPIClientTests: XCTestCase {
         XCTAssertEqual(json["volume"] as? Double, 1.0)
     }
 
+    // MARK: - 严格解码 / 校验
+
+    func testStatusDecodeRejectsEmptyOrErrorObject() async {
+        MockURLProtocol.setHandler { _ in (200, Data("{}".utf8)) }
+        await assertError(.decoding) { _ = try await self.makeClient().fetchStatus() }
+
+        MockURLProtocol.setHandler { _ in (200, Data(#"{"error":"unexpected"}"#.utf8)) }
+        await assertError(.decoding) { _ = try await self.makeClient().fetchStatus() }
+    }
+
+    func testInfoDecodeRequiresNameAndVersion() async {
+        MockURLProtocol.setHandler { _ in (200, Data(#"{"wsClients":1}"#.utf8)) }
+        await assertError(.decoding) { _ = try await self.makeClient().fetchInfo() }
+    }
+
+    func testNowPlayingDecodeRequiresCoreFields() async {
+        MockURLProtocol.setHandler { _ in (200, Data(#"{"songId":7}"#.utf8)) }
+        await assertError(.decoding) { _ = try await self.makeClient().fetchNowPlaying() }
+    }
+
+    func testStatusRejectsWrongFieldTypes() async {
+        MockURLProtocol.setHandler { _ in
+            (200, Data(#"{"state":"playing","position":"12000","duration":240000,"volume":0.5,"isFinished":false}"#.utf8))
+        }
+        await assertError(.decoding) { _ = try await self.makeClient().fetchStatus() }
+    }
+
+    func testStatusClampsNegativeTimesAndVolume() async throws {
+        MockURLProtocol.setHandler { _ in
+            (200, Data(#"{"state":"playing","position":-500,"duration":-1,"volume":2.5,"isFinished":false}"#.utf8))
+        }
+        let status = try await makeClient().fetchStatus()
+        XCTAssertEqual(status.position, 0)
+        XCTAssertEqual(status.duration, 0)
+        XCTAssertEqual(status.volume, 1.0)
+    }
+
+    func testNowPlayingClampsNegativeTimesAndVolume() async throws {
+        MockURLProtocol.setHandler { _ in
+            (200, Data(#"{"src":"http://x/y","songId":7,"paused":false,"playing":true,"buffering":false,"position":-5,"duration":-5,"volume":9}"#.utf8))
+        }
+        let now = try await makeClient().fetchNowPlaying()
+        XCTAssertEqual(now.position, 0)
+        XCTAssertEqual(now.duration, 0)
+        XCTAssertEqual(now.volume, 1.0)
+        XCTAssertEqual(now.songId, 7)
+    }
+
+    func testCommandAckRequiresOkTrue() async throws {
+        MockURLProtocol.setHandler { _ in (200, Data(#"{"ok":true}"#.utf8)) }
+        try await makeClient().send(command: .play)
+
+        MockURLProtocol.setHandler { _ in (200, Data("{}".utf8)) }
+        await assertError(.unexpectedResponse) { try await self.makeClient().send(command: .play) }
+
+        MockURLProtocol.setHandler { _ in (200, Data(#"{"ok":false}"#.utf8)) }
+        await assertError(.unexpectedResponse) { try await self.makeClient().send(command: .play) }
+    }
+
+    func testControlRequestsRequireAckNotJust2xx() async {
+        MockURLProtocol.setHandler { _ in (200, Data("{}".utf8)) }
+        await assertError(.unexpectedResponse) { try await self.makeClient().setVolume(0.5) }
+        await assertError(.unexpectedResponse) { try await self.makeClient().seek(positionMs: 1000) }
+    }
+
     // MARK: - Helpers
 
     private func assertError(

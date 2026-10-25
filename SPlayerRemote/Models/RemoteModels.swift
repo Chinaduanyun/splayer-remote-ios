@@ -1,7 +1,7 @@
 import Foundation
 
 /// 播放状态，对应上游 `GET /api/external/status` 的 `state` 字段。
-/// 上游只保证 playing / buffering / paused；其它值容错为 `.unknown` 并按暂停处理。
+/// 上游只保证 playing / buffering / paused；其它值容错为 `.unknown`。
 enum PlaybackState: String, Equatable {
     case playing
     case buffering
@@ -32,6 +32,9 @@ enum PlaybackState: String, Equatable {
 }
 
 /// `GET /api/external/info` 响应。
+///
+/// 严格解码：`name` / `version` 为上游身份核心字段，缺失或类型错误即判定为
+/// 「不是 SPlayer 外部 API」，绝不用默认值把 `{}` / `{"error":...}` 当成连接成功。
 struct InfoResponse: Decodable, Equatable {
     var name: String
     var version: String
@@ -47,13 +50,17 @@ struct InfoResponse: Decodable, Equatable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        name = (try? c.decode(String.self, forKey: .name)) ?? "SPlayer Next"
-        version = (try? c.decode(String.self, forKey: .version)) ?? "unknown"
-        wsClients = (try? c.decode(Int.self, forKey: .wsClients)) ?? 0
+        name = try c.decode(String.self, forKey: .name)
+        version = try c.decode(String.self, forKey: .version)
+        // wsClients 缺失可容忍（默认 0），但类型错误会被 decodeIfPresent 抛出。
+        wsClients = try c.decodeIfPresent(Int.self, forKey: .wsClients) ?? 0
     }
 }
 
 /// `GET /api/external/status` 响应。position/duration 单位为毫秒，volume 为 0...1。
+///
+/// 严格解码核心字段（缺失或类型错误 => 解析失败，避免把 `{}` / `{error:...}` 当作有效状态），
+/// 并在构造时把时间钳制为非负、音量钳制到 0...1（非有限音量直接判定为非法）。
 struct StatusResponse: Decodable, Equatable {
     var state: PlaybackState
     var position: Int
@@ -69,9 +76,9 @@ struct StatusResponse: Decodable, Equatable {
         isFinished: Bool = false
     ) {
         self.state = state
-        self.position = position
-        self.duration = duration
-        self.volume = volume
+        self.position = max(0, position)
+        self.duration = max(0, duration)
+        self.volume = volume.isFinite ? Self.clampVolume(volume) : 1
         self.isFinished = isFinished
     }
 
@@ -81,12 +88,27 @@ struct StatusResponse: Decodable, Equatable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let raw = (try? c.decode(String.self, forKey: .state)) ?? ""
-        state = PlaybackState(rawState: raw)
-        position = (try? c.decode(Int.self, forKey: .position)) ?? 0
-        duration = (try? c.decode(Int.self, forKey: .duration)) ?? 0
-        volume = (try? c.decode(Double.self, forKey: .volume)) ?? 1
-        isFinished = (try? c.decode(Bool.self, forKey: .isFinished)) ?? false
+        let rawState = try c.decode(String.self, forKey: .state)
+        let position = try c.decode(Int.self, forKey: .position)
+        let duration = try c.decode(Int.self, forKey: .duration)
+        let volume = try c.decode(Double.self, forKey: .volume)
+        let isFinished = try c.decode(Bool.self, forKey: .isFinished)
+        guard volume.isFinite else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: c.codingPath, debugDescription: "volume must be a finite number")
+            )
+        }
+        self.init(
+            state: PlaybackState(rawState: rawState),
+            position: position,
+            duration: duration,
+            volume: volume,
+            isFinished: isFinished
+        )
+    }
+
+    private static func clampVolume(_ value: Double) -> Double {
+        min(max(value, 0), 1)
     }
 }
 
@@ -94,6 +116,8 @@ struct StatusResponse: Decodable, Equatable {
 ///
 /// ⚠️ 上游同时返回 `src`（媒体地址），本 App **刻意不解析** 该字段：
 /// 它既不是可展示的元数据，也必须避免泄漏到 UI 或日志中。
+///
+/// 严格解码核心字段并钳制时间/音量，与 `StatusResponse` 一致。
 struct NowPlayingResponse: Decodable, Equatable {
     var songId: Int
     var paused: Bool
@@ -116,9 +140,9 @@ struct NowPlayingResponse: Decodable, Equatable {
         self.paused = paused
         self.playing = playing
         self.buffering = buffering
-        self.position = position
-        self.duration = duration
-        self.volume = volume
+        self.position = max(0, position)
+        self.duration = max(0, duration)
+        self.volume = volume.isFinite ? min(max(volume, 0), 1) : 1
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -127,13 +151,27 @@ struct NowPlayingResponse: Decodable, Equatable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        songId = (try? c.decode(Int.self, forKey: .songId)) ?? 0
-        paused = (try? c.decode(Bool.self, forKey: .paused)) ?? false
-        playing = (try? c.decode(Bool.self, forKey: .playing)) ?? false
-        buffering = (try? c.decode(Bool.self, forKey: .buffering)) ?? false
-        position = (try? c.decode(Int.self, forKey: .position)) ?? 0
-        duration = (try? c.decode(Int.self, forKey: .duration)) ?? 0
-        volume = (try? c.decode(Double.self, forKey: .volume)) ?? 1
+        let songId = try c.decode(Int.self, forKey: .songId)
+        let paused = try c.decode(Bool.self, forKey: .paused)
+        let playing = try c.decode(Bool.self, forKey: .playing)
+        let buffering = try c.decode(Bool.self, forKey: .buffering)
+        let position = try c.decode(Int.self, forKey: .position)
+        let duration = try c.decode(Int.self, forKey: .duration)
+        let volume = try c.decode(Double.self, forKey: .volume)
+        guard volume.isFinite else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: c.codingPath, debugDescription: "volume must be a finite number")
+            )
+        }
+        self.init(
+            songId: songId,
+            paused: paused,
+            playing: playing,
+            buffering: buffering,
+            position: position,
+            duration: duration,
+            volume: volume
+        )
     }
 }
 

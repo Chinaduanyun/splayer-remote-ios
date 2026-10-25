@@ -10,6 +10,8 @@ enum RemoteAPIError: Error, Equatable, LocalizedError {
     case unauthorized
     /// 403：服务端拒绝（未开启外部 API、未允许局域网访问等）。
     case forbidden
+    /// 2xx 但控制类响应缺少 `ok:true`（上游未确认操作）。
+    case unexpectedResponse
     /// 其它非 2xx 状态码。
     case httpStatus(Int)
     /// JSON 解析失败。
@@ -29,6 +31,8 @@ enum RemoteAPIError: Error, Equatable, LocalizedError {
             return "鉴权失败（401）：Token 无效或已过期，请在设置中重新填写。"
         case .forbidden:
             return "服务器拒绝访问（403）：请确认已在 Android 端「设置 → 外部 API」开启服务，并允许局域网访问。"
+        case .unexpectedResponse:
+            return "服务器未确认操作（响应缺少 ok:true）。"
         case .httpStatus(let code):
             return "服务器返回异常状态码：\(code)。"
         case .decoding:
