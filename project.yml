@@ -1,0 +1,47 @@
+name: SPlayerRemote
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  SPlayerRemote:
+    type: application
+    platform: iOS
+    sources:
+      - path: SPlayerRemote
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.splayerremote
+        INFOPLIST_FILE: SPlayerRemote/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: YES
+
+  SPlayerRemoteTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - SPlayerRemoteTests
+    dependencies:
+      - target: SPlayerRemote
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.splayerremote.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/SPlayerRemote.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SPlayerRemote"
+        BUNDLE_LOADER: "$(TEST_HOST)"

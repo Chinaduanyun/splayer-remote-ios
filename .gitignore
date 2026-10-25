@@ -1,0 +1,22 @@
+# macOS/Linux 常见忽略项
+.DS_Store
+*.xcuserstate
+xcuserdata/
+DerivedData/
+build/
+*.xcarchive
+*.ipa
+*.dSYM.zip
+
+# 私有工作笔记与上游参考源码不公开
+IMPLEMENTATION.md
+reference/
+.pi/
+*.xcresult/
+*.log
+
+# 本地 mock / 临时产物
+.venv/
+__pycache__/
+*.pyc
+/tmp/

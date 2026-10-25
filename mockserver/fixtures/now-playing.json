@@ -1,0 +1,10 @@
+{
+  "src": "http://127.0.0.1/placeholder-media",
+  "songId": 7,
+  "paused": false,
+  "playing": true,
+  "buffering": false,
+  "position": 12000,
+  "duration": 240000,
+  "volume": 0.5
+}
