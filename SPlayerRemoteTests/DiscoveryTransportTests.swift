@@ -3,6 +3,21 @@ import XCTest
 
 final class DiscoveryTransportTests: XCTestCase {
     override func tearDown() { MockURLProtocol.setHandler(nil); super.tearDown() }
+    // URLSession may expose a POST body to URLProtocol as a stream rather than Data.
+    private static func bodyData(_ request: URLRequest) throws -> Data {
+        if let data = request.httpBody { return data }
+        let stream = try XCTUnwrap(request.httpBodyStream)
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count < 0 { throw stream.streamError ?? URLError(.cannotDecodeRawData) }
+            if count == 0 { return data }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+    }
     private func api() -> DiscoveryAPIClient {
         DiscoveryAPIClient(configuration: ConnectionConfiguration(baseURL: URL(string: "http://example.test:13962/api/external")!, host: "example.test", port: 13962, token: "synthetic", useWebSocket: false), session: TestSession.make())
     }
@@ -27,7 +42,7 @@ final class DiscoveryTransportTests: XCTestCase {
             XCTAssertFalse(r.url!.absoluteString.contains("synthetic"))
             if r.httpMethod == "POST" {
                 posts += 1
-                let data = try XCTUnwrap(r.httpBody)
+                let data = try Self.bodyData(r)
                 XCTAssertEqual(r.value(forHTTPHeaderField: "Content-Length"), String(data.count))
                 XCTAssertEqual(r.value(forHTTPHeaderField: "Content-Type"), "application/json")
                 let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -77,7 +92,7 @@ final class DiscoveryTransportTests: XCTestCase {
             } else {
                 if request.httpMethod == "POST" {
                     posts += 1
-                    let body = try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as! [String: Any]
+                    let body = try JSONSerialization.jsonObject(with: Self.bodyData(request)) as! [String: Any]
                     command = body["commandId"] as! String
                 } else {
                     polls += 1
