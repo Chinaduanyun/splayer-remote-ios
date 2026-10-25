@@ -33,7 +33,9 @@ final class DiscoveryTransportTests: XCTestCase {
         }
     }
     func testCommand202ExactBodyAndStatusQuery() async throws {
-        let command = UUID(), selection = UUID()
+        let command = UUID()
+        // Include A–F: an all-digit fixture would hide Swift's UUID uppercasing.
+        let selection = try XCTUnwrap(UUID(uuidString: "abcdef12-abcd-4abc-8abc-abcdef123456"))
         var posts = 0
         MockURLProtocol.setHandler { r in
             XCTAssertEqual(r.value(forHTTPHeaderField: "Authorization"), "Bearer synthetic")
@@ -48,7 +50,7 @@ final class DiscoveryTransportTests: XCTestCase {
                 let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
                 XCTAssertEqual(Set(body.keys), Set(["commandId", "serverSessionId", "action", "selectionId", "startIndex"]))
                 XCTAssertEqual(body["commandId"] as? String, command.uuidString)
-                XCTAssertEqual(body["selectionId"] as? String, selection.uuidString)
+                XCTAssertEqual(body["selectionId"] as? String, "abcdef12-abcd-4abc-8abc-abcdef123456")
                 XCTAssertEqual(body["startIndex"] as? Int, 2)
                 XCTAssertEqual(body["action"] as? String, "replaceQueue")
                 XCTAssertEqual(body["serverSessionId"] as? String, "session")

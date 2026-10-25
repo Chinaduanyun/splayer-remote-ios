@@ -118,7 +118,9 @@ final class DiscoveryAPIClient: DiscoveryAPI {
         try await execute(request(path, query: query), as: T.self)
     }
     func submit(session: String, selection: UUID, index: Int, command: UUID) async throws -> DiscoveryCommandStatus {
-        let body = try JSONSerialization.data(withJSONObject: ["commandId": command.uuidString, "serverSessionId": session, "action": "replaceQueue", "selectionId": selection.uuidString, "startIndex": index])
+        // Android's renderer stores crypto.randomUUID() keys in lowercase; Swift
+        // UUID.uuidString is uppercase. Preserve the server's canonical key format.
+        let body = try JSONSerialization.data(withJSONObject: ["commandId": command.uuidString, "serverSessionId": session, "action": "replaceQueue", "selectionId": selection.uuidString.lowercased(), "startIndex": index])
         // Exactly one attempt. A transport error may mean it was accepted; never retry this POST.
         return try await execute(request("commands", body: body), as: DiscoveryCommandStatus.self)
     }
