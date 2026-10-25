@@ -151,7 +151,7 @@ xcodebuild test \
 **App 与扩展都尚未签名，不能直接安装到真机**；需要使用自己的有效签名与 provisioning profile，
 或在 Xcode 中配置 Team 后安装（扩展与 App 都必须签名）。
 
-也可在公开仓库的 Actions 页面手动运行 `iOS build and tests`：标准 macOS runner 执行模拟器测试与设备归档，产物只保留 3 天。工作流不需要 Apple ID 或签名凭证，在主分支 push 或手动启动时触发，单次限制 30 分钟。
+也可在公开仓库的 Actions 页面手动运行 `iOS build and tests`：标准 macOS runner 执行模拟器测试与设备归档，产物只保留 1 天。工作流不需要 Apple ID 或签名凭证，仅手动启动时触发，单次限制 30 分钟。
 
 ---
 
