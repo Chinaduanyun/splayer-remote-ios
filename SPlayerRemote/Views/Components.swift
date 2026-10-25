@@ -57,6 +57,7 @@ struct ConnectionBadge: View {
 
 struct PlaybackStatusPanel: View {
     @EnvironmentObject private var remote: RemoteViewModel
+    @State private var showsVolume = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -65,16 +66,27 @@ struct PlaybackStatusPanel: View {
                     .font(.largeTitle.bold())
                     .foregroundStyle(.primary)
                 Spacer()
-                if let info = remote.info {
-                    Text("v\(info.version)")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                Button {
+                    showsVolume.toggle()
+                } label: {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.title3)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("调节播放音量")
+                .popover(isPresented: $showsVolume) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("播放音量").font(.headline)
+                        VolumeSection()
+                    }
+                    .padding(20)
+                    .frame(width: 280)
+                    .presentationCompactAdaptation(.popover)
                 }
             }
 
             ProgressSection()
-
-            VolumeSection()
 
             NowPlayingMetadataSection()
         }
@@ -133,42 +145,7 @@ private struct ProgressSection: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
-            HStack(spacing: 10) {
-                SeekShortcutButton(title: "－15 秒", systemImage: "gobackward.15", enabled: remote.canSeek) {
-                    remote.seekBy(seconds: -15)
-                }
-                SeekShortcutButton(title: "开头", systemImage: "backward.end.fill", enabled: remote.canSeek) {
-                    remote.seekToStart()
-                }
-                SeekShortcutButton(title: "＋15 秒", systemImage: "goforward.15", enabled: remote.canSeek) {
-                    remote.seekBy(seconds: 15)
-                }
-            }
         }
-    }
-}
-
-/// 轻量跳转快捷按钮（≥44pt 命中区）。
-private struct SeekShortcutButton: View {
-    let title: String
-    let systemImage: String
-    let enabled: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: systemImage)
-                Text(title)
-                    .font(.footnote.weight(.semibold))
-            }
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.bordered)
-        .tint(Theme.accent)
-        .disabled(!enabled)
-        .accessibilityLabel(title)
     }
 }
 
