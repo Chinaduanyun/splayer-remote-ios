@@ -106,4 +106,39 @@ final class WebSocketTransportTests: XCTestCase {
         transport.start()
         XCTAssertEqual(transport.state, .closed)
     }
+
+    /// 握手 open 与 stop 竞争：无论谁先执行，最终必须是 closed，且不会在 closed 后再投递 open。
+    func testConcurrentOpenAndStopAlwaysEndsClosed() throws {
+        for _ in 0..<20 {
+            let request = try XCTUnwrap(APIRequestFactory.webSocketRequest(baseURL: baseURL, token: "t"))
+            let transport = URLSessionWebSocketTransport(request: request, session: TestSession.make())
+            let task = transport.session.webSocketTask(with: request.url!)
+            transport._installTask(task)
+
+            let historyLock = NSLock()
+            var history: [RemoteSocketState] = []
+            transport.onStateChange = { state in
+                historyLock.lock(); history.append(state); historyLock.unlock()
+            }
+
+            let group = DispatchGroup()
+            group.enter()
+            DispatchQueue.global().async {
+                transport.delegate.onOpen?(task)
+                group.leave()
+            }
+            group.enter()
+            DispatchQueue.global().async {
+                transport.stop()
+                group.leave()
+            }
+            group.wait()
+
+            XCTAssertEqual(transport.state, .closed)
+            historyLock.lock()
+            let seen = history
+            historyLock.unlock()
+            XCTAssertNotEqual(seen.last, .open, "closed 之后不得再投递 open：\(seen)")
+        }
+    }
 }

@@ -27,6 +27,8 @@ final class MockRemoteAPI: RemoteAPI {
     var commandResult: Result<Void, Error> = .success(())
     var seekResult: Result<Void, Error> = .success(())
     var volumeResult: Result<Void, Error> = .success(())
+    var lanShareQueueResult: Result<LanShareQueue?, Error> = .success(nil)
+    var lanShareLyricResult: Result<LanShareLyricDocument?, Error> = .success(nil)
 
     /// 可选的异步「挂起」钩子，用于确定性地测试延迟返回 / 取消 / 后台场景。
     var infoDelay: (() async -> Void)?
@@ -35,6 +37,8 @@ final class MockRemoteAPI: RemoteAPI {
     var commandDelay: (() async -> Void)?
     var seekDelay: (() async -> Void)?
     var volumeDelay: (() async -> Void)?
+    var lanShareQueueDelay: (() async -> Void)?
+    var lanShareLyricDelay: (() async -> Void)?
 
     private(set) var infoCallCount = 0
     private(set) var statusCallCount = 0
@@ -42,6 +46,8 @@ final class MockRemoteAPI: RemoteAPI {
     private(set) var sentCommands: [RemoteCommand] = []
     private(set) var soughtPositions: [Int] = []
     private(set) var setVolumes: [Double] = []
+    private(set) var lanShareQueueCallCount = 0
+    private(set) var lanShareLyricCallCount = 0
 
     func fetchInfo() async throws -> InfoResponse {
         infoCallCount += 1
@@ -77,6 +83,18 @@ final class MockRemoteAPI: RemoteAPI {
         setVolumes.append(volume)
         if let volumeDelay { await volumeDelay() }
         try volumeResult.get()
+    }
+
+    func fetchLanShareQueue() async throws -> LanShareQueue? {
+        lanShareQueueCallCount += 1
+        if let lanShareQueueDelay { await lanShareQueueDelay() }
+        return try lanShareQueueResult.get()
+    }
+
+    func fetchLanShareLyric() async throws -> LanShareLyricDocument? {
+        lanShareLyricCallCount += 1
+        if let lanShareLyricDelay { await lanShareLyricDelay() }
+        return try lanShareLyricResult.get()
     }
 }
 
@@ -231,4 +249,67 @@ enum ProtocolFixtures {
     static let status = Data(#"{"state":"playing","position":12000,"duration":240000,"volume":0.5,"isFinished":false}"#.utf8)
     /// 故意包含上游 `src` 字段，验证客户端会忽略它。
     static let nowPlaying = Data(#"{"src":"http://secret.example/media/stream?id=abc","songId":7,"paused":false,"playing":true,"buffering":false,"position":12000,"duration":240000,"volume":0.5}"#.utf8)
+}
+
+/// 局域网分享夹具（**合成数据**，不含任何真实用户歌曲 / Token / IP）。
+enum LanShareFixtures {
+    static func track(id: String, source: String = "netease", title: String = "Example song", duration: Int = 213266) -> [String: Any] {
+        [
+            "id": id,
+            "source": source,
+            "title": title,
+            "artists": [["id": "1", "name": "Example artist"]],
+            "album": ["id": "2", "name": "Example album", "cover": "https://example.invalid/cover.jpg"],
+            "duration": duration,
+            "cover": "https://example.invalid/cover.jpg",
+        ]
+    }
+
+    /// 三条合成曲目的队列 JSON，`playIndex` 故意指向第 0 条（可能过期）。
+    static var queueJSON: Data {
+        let payload: [String: Any] = [
+            "ok": true,
+            "revision": 11,
+            "data": [
+                "playIndex": 0,
+                "tracks": [
+                    track(id: "19827042", title: "Example song one"),
+                    track(id: "55", title: "Example song two"),
+                    track(id: "77", source: "local", title: "Example song three"),
+                ],
+            ],
+        ]
+        return try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+    }
+
+    static let queueNotReady = Data(#"{"ok":false,"reason":"queue not ready"}"#.utf8)
+
+    static var lyricJSON: Data {
+        let lrc = "[00:01.00]First line\n[00:05.50]Second line\n[01:00.00]Third line"
+        let translation = "[00:01.00]第一行\n[00:05.50]第二行"
+        let payload: [String: Any] = [
+            "ok": true,
+            "revision": 28,
+            "data": [
+                "source": ["source": "netease", "format": "lrc", "platform": "netease"],
+                "input": ["content": lrc, "translation": translation, "translationFormat": "lrc"],
+            ],
+        ]
+        return try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+    }
+
+    static var unsupportedLyricJSON: Data {
+        let payload: [String: Any] = [
+            "ok": true,
+            "revision": 3,
+            "data": [
+                "source": ["source": "qq", "format": "ttml", "platform": "qq"],
+                "input": ["content": "<tt>...</tt>", "translation": ""],
+            ],
+        ]
+        return try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+    }
+
+    static var queue: LanShareQueue { try! LanShareQueue.decode(from: queueJSON)! }
+    static var lyric: LanShareLyricDocument { try! LanShareLyricDocument.decode(from: lyricJSON)! }
 }

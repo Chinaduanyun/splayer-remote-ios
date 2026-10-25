@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "revision": 28,
+  "data": {
+    "source": { "source": "netease", "format": "lrc", "platform": "netease" },
+    "input": {
+      "content": "[00:01.00]Example first line\n[00:05.50]Example second line\n[01:00.00]Example third line",
+      "translation": "[00:01.00]示例第一行\n[00:05.50]示例第二行",
+      "translationFormat": "lrc"
+    }
+  }
+}

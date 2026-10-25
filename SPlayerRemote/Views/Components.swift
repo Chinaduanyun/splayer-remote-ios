@@ -76,7 +76,7 @@ struct PlaybackStatusPanel: View {
 
             VolumeSection()
 
-            MetadataExplanation(songId: remote.songId)
+            NowPlayingMetadataSection()
         }
         .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -172,8 +172,8 @@ private struct SeekShortcutButton: View {
     }
 }
 
-/// 音量：滑杆 + 静音 / 步进 / 预设；仅松手或点击时上报一次，绝不自动重试。
-/// 这里控制的是 **Android 端播放音量**，不是手机系统音量。
+/// 音量：仅保留滑杆 + 百分比，控制的是 **Android 端播放音量**，不是手机系统音量。
+/// 仅松手时上报一次，绝不自动重试。（静音 / 步进 / 预设快捷按钮已按 V1.2 需求移除。）
 private struct VolumeSection: View {
     @EnvironmentObject private var remote: RemoteViewModel
 
@@ -206,88 +206,11 @@ private struct VolumeSection: View {
                     .foregroundStyle(.secondary)
                     .frame(minWidth: 40, alignment: .trailing)
             }
-
-            // 拆成两行，避免窄屏（约 295pt 可用宽）横向溢出；每个按钮保持 ≥44pt。
-            HStack(spacing: 8) {
-                VolumeStepButton(systemImage: remote.isMuted ? "speaker.wave.2.fill" : "speaker.slash.fill",
-                                 label: remote.isMuted ? "取消静音" : "静音",
-                                 enabled: remote.canControl) {
-                    remote.toggleMute()
-                }
-                VolumeStepButton(systemImage: "minus", label: "音量减少 5%", enabled: remote.canControl) {
-                    remote.adjustVolume(by: -0.05)
-                }
-                VolumeStepButton(systemImage: "plus", label: "音量增加 5%", enabled: remote.canControl) {
-                    remote.adjustVolume(by: 0.05)
-                }
-                Spacer(minLength: 0)
-            }
-
-            HStack(spacing: 8) {
-                ForEach([25, 50, 75, 100], id: \.self) { preset in
-                    VolumeStepButton(title: "\(preset)",
-                                     label: "音量 \(preset)%",
-                                     enabled: remote.canControl) {
-                        remote.setVolumePreset(Double(preset) / 100)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
         }
     }
 }
 
-/// 音量快捷按钮（图标或短文本，≥44pt）。
-private struct VolumeStepButton: View {
-    var systemImage: String? = nil
-    var title: String? = nil
-    let label: String
-    let enabled: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Group {
-                if let systemImage {
-                    Image(systemName: systemImage).font(.system(size: 15, weight: .semibold))
-                } else if let title {
-                    Text(title).font(.footnote.weight(.semibold)).monospacedDigit()
-                }
-            }
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.bordered)
-        .tint(Theme.accent)
-        .disabled(!enabled)
-        .accessibilityLabel(label)
-    }
-}
-
-/// 上游 API 不提供标题 / 艺人 / 封面，这里如实说明，不伪造任何元数据。
-private struct MetadataExplanation: View {
-    let songId: Int?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "music.note.list")
-                    .foregroundStyle(Theme.accent)
-                    .accessibilityHidden(true)
-                Text("歌曲标识")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text(songId.map { "#\($0)" } ?? "—")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-            Text("SPlayer 外部 API 仅返回歌曲 ID、进度与音量，不提供标题、艺人或封面图片，因此本 App 不会虚构这些信息。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
+/// 音量快捷按钮已按 V1.2 需求移除（静音 / ±5% / 25-100 预设）。
 
 // MARK: - 交通控制面板
 

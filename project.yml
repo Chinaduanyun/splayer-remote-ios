@@ -11,8 +11,8 @@ settings:
     SWIFT_VERSION: "5.0"
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1"
-    MARKETING_VERSION: "1.1"
-    CURRENT_PROJECT_VERSION: "2"
+    MARKETING_VERSION: "1.2"
+    CURRENT_PROJECT_VERSION: "3"
 
 targets:
   SPlayerRemote:
@@ -22,6 +22,10 @@ targets:
       - path: SPlayerRemote
         excludes:
           - "Info.plist"
+      - path: SPlayerRemoteShared
+    dependencies:
+      - target: SPlayerRemoteLiveActivity
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.splayerremote
@@ -31,6 +35,24 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         CODE_SIGN_STYLE: Automatic
         ENABLE_PREVIEWS: YES
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: APP_TARGET
+
+  SPlayerRemoteLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: SPlayerRemoteLiveActivity
+        excludes:
+          - "Info.plist"
+      - path: SPlayerRemoteShared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.splayerremote.liveactivity
+        INFOPLIST_FILE: SPlayerRemoteLiveActivity/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        CODE_SIGN_STYLE: Automatic
 
   SPlayerRemoteTests:
     type: bundle.unit-test

@@ -58,9 +58,6 @@ extension APIRequestFactory {
 ///   携带鉴权头的握手请求绝不能被转发到其它主机；
 /// - 上报握手完成（`.open`）与关闭（`.closed`），使 `RemoteViewModel` 能选择实时轮询节奏
 ///   并在成功握手后重置退避。
-///
-/// 回调来自会话 delegate 队列；transport 侧通过 task 身份校验，保证 stop 之后到达的
-/// 回调不会重新打开连接。
 final class WebSocketSessionDelegate: NSObject, URLSessionWebSocketDelegate {
 
     var onOpen: ((URLSessionWebSocketTask) -> Void)?
@@ -104,6 +101,10 @@ final class WebSocketSessionDelegate: NSObject, URLSessionWebSocketDelegate {
 /// - 握手完成由 `WebSocketSessionDelegate` 上报 `.open`；
 /// - `stop()` 取消接收 / ping 任务与底层 task，并（自有会话时）失效会话，避免泄漏；
 /// - 任何接收错误都收敛为 `.closed`，由 `RemoteViewModel` 决定是否回退 / 重连。
+///
+/// 并发策略：`task` / `isStopped` / 状态迁移 / 回调投递全部在同一个串行 `lifecycle` 队列上
+/// 执行；`state` 与回调属性的读写由独立小锁保护。回调在锁外调用，且由于 open 回调与 stop
+/// 在同一串行队列，stop 之后不会再有 `.open` 投递。
 final class URLSessionWebSocketTransport: RemoteSocket {
 
     private let request: URLRequest
@@ -113,15 +114,29 @@ final class URLSessionWebSocketTransport: RemoteSocket {
     let session: URLSession
     private let ownsSession: Bool
     private let pingIntervalNanoseconds: UInt64
+
+    /// 保护 `currentState` 与回调属性的读写（临界区极短）。
+    private let lock = NSLock()
+    private var currentState: RemoteSocketState = .idle
+    private var messageHandler: ((RemoteSocketMessage) -> Void)?
+    private var stateHandler: ((RemoteSocketState) -> Void)?
+
+    /// 串行化 task / stop / 握手 / 接收错误与回调投递。
+    private let lifecycle = DispatchQueue(label: "com.example.splayerremote.websocket.lifecycle")
     private var task: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
-    private let lock = NSLock()
-    private var currentState: RemoteSocketState = .idle
     private var isStopped = false
 
-    var onMessage: ((RemoteSocketMessage) -> Void)?
-    var onStateChange: ((RemoteSocketState) -> Void)?
+    var onMessage: ((RemoteSocketMessage) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return messageHandler }
+        set { lock.lock(); messageHandler = newValue; lock.unlock() }
+    }
+
+    var onStateChange: ((RemoteSocketState) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return stateHandler }
+        set { lock.lock(); stateHandler = newValue; lock.unlock() }
+    }
 
     var state: RemoteSocketState {
         lock.lock(); defer { lock.unlock() }
@@ -165,56 +180,87 @@ final class URLSessionWebSocketTransport: RemoteSocket {
     }
 
     func start() {
-        guard !isStopped else { return }
-        guard task == nil else { return }
-        setState(.connecting)
-        let task = session.webSocketTask(with: request)
-        self.task = task
-        task.resume()
-        startReceiveLoop(task: task)
-        startPingLoop(task: task)
+        lifecycle.sync {
+            guard !isStopped, task == nil else { return }
+            let newTask = session.webSocketTask(with: request)
+            task = newTask
+            if let handler = takeStateChange(.connecting) {
+                handler(.connecting)
+            }
+            newTask.resume()
+            startReceiveLoop(task: newTask)
+            startPingLoop(task: newTask)
+        }
     }
 
     func stop() {
-        isStopped = true
-        receiveTask?.cancel(); receiveTask = nil
-        pingTask?.cancel(); pingTask = nil
-        let task = self.task
-        self.task = nil
-        task?.cancel(with: .goingAway, reason: nil)
-        if ownsSession {
+        var taskToCancel: URLSessionWebSocketTask?
+        var shouldInvalidate = false
+        lifecycle.sync {
+            guard !isStopped else { return }
+            isStopped = true
+            taskToCancel = task
+            task = nil
+            receiveTask?.cancel(); receiveTask = nil
+            pingTask?.cancel(); pingTask = nil
+            if let handler = takeStateChange(.closed) {
+                handler(.closed)
+            }
+            shouldInvalidate = ownsSession
+        }
+        // 在串行队列之外取消 / 失效，避免与 delegate 回调互相阻塞。
+        taskToCancel?.cancel(with: .goingAway, reason: nil)
+        if shouldInvalidate {
             session.invalidateAndCancel()
         }
-        setState(.closed)
     }
 
     // MARK: - 测试支持
 
     /// 仅用于测试：直接安装底层 task，避免真实网络即可验证握手回调逻辑。
-    func _installTask(_ task: URLSessionWebSocketTask) {
-        self.task = task
+    func _installTask(_ installedTask: URLSessionWebSocketTask) {
+        lifecycle.sync {
+            guard !isStopped else { return }
+            task = installedTask
+        }
     }
 
-    // MARK: - 内部
+    // MARK: - 内部（全部在 lifecycle 串行队列上）
 
-    private func setState(_ state: RemoteSocketState) {
+    /// 更新状态并在有变化时返回需要投递的回调（回调在锁外调用）。
+    private func takeStateChange(_ newState: RemoteSocketState) -> ((RemoteSocketState) -> Void)? {
         lock.lock()
-        let changed = currentState != state
-        currentState = state
+        let changed = currentState != newState
+        if changed { currentState = newState }
+        let handler = changed ? stateHandler : nil
         lock.unlock()
-        if changed { onStateChange?(state) }
+        return handler
     }
 
-    /// 握手完成：只有仍属于当前 task 且未 stop 时才进入 `.open`。
-    private func handleHandshakeOpen(_ task: URLSessionWebSocketTask) {
-        guard task === self.task else { return }
-        setState(.open)
+    private func currentMessageHandler() -> ((RemoteSocketMessage) -> Void)? {
+        lock.lock(); defer { lock.unlock() }
+        return messageHandler
     }
 
-    /// 对端关闭：只有仍属于当前 task 时才收敛为 `.closed`。
-    private func handleHandshakeClose(_ task: URLSessionWebSocketTask) {
-        guard task === self.task else { return }
-        setState(.closed)
+    /// 握手完成：与 stop 在同一串行队列，因而 stop 之后不会投递 `.open`。
+    private func handleHandshakeOpen(_ incoming: URLSessionWebSocketTask) {
+        lifecycle.sync {
+            guard !isStopped, incoming === task else { return }
+            if let handler = takeStateChange(.open) {
+                handler(.open)
+            }
+        }
+    }
+
+    /// 对端关闭 / 接收失败：同样串行化，并清除 task 以拒绝迟到的 open。
+    private func handleHandshakeClose(_ incoming: URLSessionWebSocketTask) {
+        lifecycle.sync {
+            guard !isStopped, incoming === task else { return }
+            task = nil
+            if let handler = takeStateChange(.closed) {
+                handler(.closed)
+            }
+        }
     }
 
     private func startReceiveLoop(task: URLSessionWebSocketTask) {
@@ -233,13 +279,30 @@ final class URLSessionWebSocketTransport: RemoteSocket {
                         text = nil
                     }
                     if let text {
-                        self?.onMessage?(RemoteSocketMessage.decode(from: text))
+                        self?.enqueueMessage(text: text, from: task)
                     }
                 } catch {
                     guard !Task.isCancelled else { return }
-                    self?.setState(.closed)
+                    self?.enqueueReceiveFailure(from: task)
                     return
                 }
+            }
+        }
+    }
+
+    private func enqueueMessage(text: String, from source: URLSessionWebSocketTask) {
+        lifecycle.async { [weak self] in
+            guard let self, !self.isStopped, source === self.task else { return }
+            self.currentMessageHandler()?(RemoteSocketMessage.decode(from: text))
+        }
+    }
+
+    private func enqueueReceiveFailure(from source: URLSessionWebSocketTask) {
+        lifecycle.async { [weak self] in
+            guard let self, !self.isStopped, source === self.task else { return }
+            self.task = nil
+            if let handler = self.takeStateChange(.closed) {
+                handler(.closed)
             }
         }
     }

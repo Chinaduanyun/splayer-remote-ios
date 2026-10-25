@@ -654,6 +654,123 @@ final class RemoteViewModelWebSocketTests: XCTestCase {
         XCTAssertEqual(factory.sockets.count, 1, "断开后不得继续退避重连")
     }
 
+    // MARK: - 精确修复：新鲜度 / 排序屏障 / 连接替换手势
+
+    func testInsufficientOrInvalidPartialsDoNotRestoreFreshness() async {
+        let api = MockRemoteAPI()
+        let factory = MockSocketFactory()
+        let vm = makeViewModel(api: api, socketFactory: factory.make())
+        await vm.connect()
+        defer { vm.disconnect() }
+        await waitUntil { vm.transport == .live }
+
+        api.statusResult = .failure(RemoteAPIError.transport("down"))
+        api.nowPlayingResult = .failure(RemoteAPIError.transport("down"))
+        await vm.refreshNow()
+        XCTAssertTrue(vm.isStale)
+
+        let socket = factory.latest
+        let insufficient: [StateChangedPayload] = [
+            StateChangedPayload(ready: false),
+            StateChangedPayload(durationMs: 250_000),
+            StateChangedPayload(positionMs: -1),
+            StateChangedPayload(durationMs: -1)
+        ]
+        for payload in insufficient {
+            socket?.emit(.stateChanged(payload))
+            await drain()
+            XCTAssertTrue(vm.isStale, "不完整/非法事件不得清除过期：\(payload)")
+            XCTAssertFalse(vm.canControl)
+        }
+
+        socket?.emit(.stateChanged(StateChangedPayload(
+            playing: true, durationMs: 240_000, positionMs: 30_000
+        )))
+        await waitUntil { !vm.isStale }
+        XCTAssertTrue(vm.canControl, "完整合法快照应恢复控制")
+    }
+
+    func testVolumeOnlyEventBlocksOlderPoll() async {
+        let api = MockRemoteAPI()
+        let factory = MockSocketFactory()
+        let vm = makeViewModel(api: api, socketFactory: factory.make())
+        await vm.connect()
+        defer { vm.disconnect() }
+        await waitUntil { vm.transport == .live }
+
+        let gate = AsyncGate()
+        api.statusDelay = { await gate.wait() }
+        api.nowPlayingDelay = { await gate.wait() }
+        api.statusResult = .success(StatusResponse(state: .playing, position: 99_999, duration: 240_000, volume: 0.9, isFinished: false))
+        api.nowPlayingResult = .success(NowPlayingResponse(songId: 42, paused: false, playing: true, buffering: false, position: 99_999, duration: 240_000, volume: 0.9))
+
+        let refresh = Task { await vm.refreshNow() }
+        await waitUntil { api.statusCallCount >= 2 }
+
+        factory.latest?.emit(.stateChanged(StateChangedPayload(volume: 0.1)))
+        await waitUntil { abs(vm.currentVolume - 0.1) < 0.0001 }
+
+        await gate.open()
+        await refresh.value
+
+        XCTAssertEqual(vm.currentVolume, 0.1, accuracy: 0.0001, "较早的轮询不得覆盖更新的 volume-only 事件")
+        XCTAssertNotEqual(vm.status?.position, 99_999)
+    }
+
+    func testSongIdOnlyEventBlocksOlderPoll() async {
+        let api = MockRemoteAPI()
+        let factory = MockSocketFactory()
+        let vm = makeViewModel(api: api, socketFactory: factory.make())
+        await vm.connect()
+        defer { vm.disconnect() }
+        await waitUntil { vm.transport == .live }
+        XCTAssertEqual(vm.songId, 42)
+
+        let gate = AsyncGate()
+        api.statusDelay = { await gate.wait() }
+        api.nowPlayingDelay = { await gate.wait() }
+        api.statusResult = .success(StatusResponse(state: .playing, position: 99_999, duration: 240_000, volume: 0.5, isFinished: false))
+        api.nowPlayingResult = .success(NowPlayingResponse(songId: 77, paused: false, playing: true, buffering: false, position: 99_999, duration: 240_000, volume: 0.5))
+
+        let refresh = Task { await vm.refreshNow() }
+        await waitUntil { api.statusCallCount >= 2 }
+
+        factory.latest?.emit(.stateChanged(StateChangedPayload(songId: 55)))
+        await waitUntil { vm.songId == 55 }
+
+        await gate.open()
+        await refresh.value
+
+        XCTAssertEqual(vm.songId, 55, "较早的轮询不得覆盖更新的 songId-only 事件")
+        XCTAssertNotEqual(vm.status?.position, 99_999)
+    }
+
+    func testSeekGestureInvalidatedAcrossReconnectWithSameSong() async {
+        let api = MockRemoteAPI()
+        let vm = makeViewModel(api: api, socketFactory: nil, useWebSocket: false)
+        await vm.connect()
+        defer { vm.disconnect() }
+        XCTAssertEqual(vm.songId, 42)
+
+        vm.setSeekAdjusting(true)
+        vm.updateSeekDraft(50_000)
+        XCTAssertEqual(vm.seekDraft, 50_000)
+
+        // 重连内部会走 disconnect(resetState: false)，曲目仍为 42（相同 songId）。
+        await vm.connect()
+        XCTAssertEqual(vm.songId, 42)
+
+        vm.setSeekAdjusting(false)
+        await drain()
+        XCTAssertTrue(api.soughtPositions.isEmpty, "旧连接的手势释放不得上报")
+
+        vm.setSeekAdjusting(true)
+        vm.updateSeekDraft(10_000)
+        vm.setSeekAdjusting(false)
+        await waitUntil { api.soughtPositions.count == 1 && !vm.isCommandInFlight }
+        XCTAssertEqual(api.soughtPositions, [10_000])
+    }
+
     // MARK: - Helpers
 
     private func waitUntil(

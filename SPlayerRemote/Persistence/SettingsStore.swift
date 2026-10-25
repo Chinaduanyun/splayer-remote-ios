@@ -24,6 +24,8 @@ final class SettingsStore: ObservableObject {
     @Published var useWebSocket: Bool
     /// 是否在启动 / 回前台时自动连接（默认关闭，首次安装更安全）。
     @Published var autoConnect: Bool
+    /// 是否启用锁屏 / 灵动岛实时活动（默认关闭，需用户显式授权）。
+    @Published var liveActivityEnabled: Bool
     /// 上一次 Keychain 操作失败信息（若有）。
     @Published private(set) var keychainError: String?
 
@@ -35,6 +37,7 @@ final class SettingsStore: ObservableObject {
         static let port = "remote.port"
         static let useWebSocket = "remote.useWebSocket"
         static let autoConnect = "remote.autoConnect"
+        static let liveActivityEnabled = "remote.liveActivityEnabled"
     }
 
     init(defaults: UserDefaults = .standard, tokenStore: TokenStoring = KeychainTokenStore()) {
@@ -47,6 +50,7 @@ final class SettingsStore: ObservableObject {
         // 缺省视为开启（保留历史用户），但用户可关闭。
         self.useWebSocket = defaults.object(forKey: Keys.useWebSocket) as? Bool ?? true
         self.autoConnect = defaults.object(forKey: Keys.autoConnect) as? Bool ?? false
+        self.liveActivityEnabled = defaults.object(forKey: Keys.liveActivityEnabled) as? Bool ?? false
 
         if let loaded = try? tokenStore.loadToken() {
             self.token = loaded
@@ -64,6 +68,7 @@ final class SettingsStore: ObservableObject {
         }
         defaults.set(useWebSocket, forKey: Keys.useWebSocket)
         defaults.set(autoConnect, forKey: Keys.autoConnect)
+        defaults.set(liveActivityEnabled, forKey: Keys.liveActivityEnabled)
     }
 
     /// 是否已保存可用的主机 + Token（使用**已提交**的配置，而非编辑中的草稿）。
@@ -132,6 +137,12 @@ final class SettingsStore: ObservableObject {
         try tokenStore.deleteToken()
         token = ""
         keychainError = nil
+    }
+
+    /// 更新实时活动开关并立即持久化。
+    func setLiveActivityEnabled(_ enabled: Bool) {
+        liveActivityEnabled = enabled
+        defaults.set(enabled, forKey: Keys.liveActivityEnabled)
     }
 
     /// 校验当前 host/port 并返回基础 URL。

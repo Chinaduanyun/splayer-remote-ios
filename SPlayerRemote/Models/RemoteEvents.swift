@@ -117,12 +117,21 @@ struct StateChangedPayload: Equatable {
         )
     }
 
-    /// 是否携带可验证的播放状态（而非仅音量或空负载）。
-    ///
-    /// 只有携带这类字段的事件才能认定为「新鲜状态快照」，从而清除过期标记；
-    /// 空负载 / 仅 `src` / 仅音量的负载不得影响 REST 可用性或控制门控。
-    var isStatusBearing: Bool {
-        playing != nil || buffering != nil || paused != nil
-            || positionMs != nil || durationMs != nil || ready != nil
+    /// 是否携带会写入 HTTP 共享字段的权威字段。
+    /// 用于「排序屏障」：即使是不足以恢复新鲜度的 partial（仅音量 / 仅 songId / 非法时间），
+    /// 只要已合并进状态，就必须阻止更早发起的轮询覆盖它。
+    var mutatesSharedState: Bool {
+        songId != nil || volume != nil || positionMs != nil || durationMs != nil
+            || playing != nil || buffering != nil || paused != nil
+            || playbackRate != nil || ready != nil || errorCode != nil
+    }
+
+    /// 是否足以恢复「播放数据新鲜」：必须是明确的播放状态 + 合法位置。
+    /// ready-only、仅时长、负数位置/时长等 partial 一律不得清除过期；
+    /// 此时保持 stale，直到下一次成功的 REST 或完整快照。
+    var isFreshPlaybackSnapshot: Bool {
+        guard let position = positionMs, position >= 0 else { return false }
+        if let duration = durationMs, duration < 0 { return false }
+        return playing != nil || buffering != nil || paused != nil
     }
 }

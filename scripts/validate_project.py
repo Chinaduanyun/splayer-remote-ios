@@ -182,7 +182,7 @@ def check_pbxproj():
 
     targets = objects.get(root, {}).get("targets", [])
     target_names = {objects[t].get("name") for t in targets if t in objects}
-    check({"SPlayerRemote", "SPlayerRemoteTests"} <= target_names, f"包含两个 target：{target_names}")
+    check({"SPlayerRemote", "SPlayerRemoteTests", "SPlayerRemoteLiveActivity"} <= target_names, f"包含三个 target：{target_names}")
 
     # 每个 Swift 文件都在 Sources 阶段（按 fileRef path 匹配）
     referenced_paths = {
@@ -197,7 +197,10 @@ def check_pbxproj():
 
     disk_swift = {
         p.relative_to(ROOT).as_posix()
-        for p in list((ROOT / "SPlayerRemote").rglob("*.swift")) + list((ROOT / "SPlayerRemoteTests").rglob("*.swift"))
+        for p in list((ROOT / "SPlayerRemote").rglob("*.swift"))
+        + list((ROOT / "SPlayerRemoteShared").rglob("*.swift"))
+        + list((ROOT / "SPlayerRemoteLiveActivity").rglob("*.swift"))
+        + list((ROOT / "SPlayerRemoteTests").rglob("*.swift"))
     }
     referenced_swift = {p for p in referenced_paths if p and p.endswith(".swift")}
     missing = disk_swift - referenced_swift
@@ -232,15 +235,60 @@ def check_test_target_unit_test(parsed):
     check(objects[test_target].get("productType") == "com.apple.product-type.bundle.unit-test", "测试 target 是 unit-test bundle")
 
 
+def check_extension_target(parsed):
+    if not parsed:
+        return
+    objects = parsed["objects"]
+    targets = objects.get(parsed["rootObject"], {}).get("targets", [])
+    ext_target = next((t for t in targets if objects.get(t, {}).get("name") == "SPlayerRemoteLiveActivity"), None)
+    check(ext_target is not None, "存在 Live Activity 扩展 target")
+    if ext_target is None:
+        return
+    check(objects[ext_target].get("productType") == "com.apple.product-type.app-extension", "扩展 target 是 app-extension")
+
+    # 扩展构建设置：APPLICATION_EXTENSION_API_ONLY / SKIP_INSTALL。
+    configs = objects.get(objects[ext_target].get("buildConfigurationList"), {}).get("buildConfigurations", [])
+    settings_seen = [objects.get(c, {}).get("buildSettings", {}) for c in configs if c in objects]
+    check(any(s.get("APPLICATION_EXTENSION_API_ONLY") == "YES" for s in settings_seen),
+          "扩展设置 APPLICATION_EXTENSION_API_ONLY=YES")
+    check(any(s.get("SKIP_INSTALL") == "YES" for s in settings_seen), "扩展设置 SKIP_INSTALL=YES")
+
+    # App 必须通过 Embed App Extensions（dstSubfolderSpec=13）嵌入扩展。
+    app_target = next((t for t in targets if objects.get(t, {}).get("name") == "SPlayerRemote"), None)
+    embed_phase = next((p for p in objects.get(app_target, {}).get("buildPhases", [])
+                        if objects.get(p, {}).get("isa") == "PBXCopyFilesBuildPhase"), None)
+    check(embed_phase is not None, "App 含 Embed App Extensions 阶段")
+    if embed_phase is not None:
+        body = objects.get(embed_phase, {})
+        check(body.get("dstSubfolderSpec") == "13", "嵌入目标为 PlugIns（dstSubfolderSpec=13）")
+        build_refs = {i: b.get("fileRef") for i, b in objects.items()
+                      if isinstance(b, dict) and b.get("isa") == "PBXBuildFile"}
+        embedded = [objects.get(build_refs.get(bf), {}).get("path") for bf in body.get("files", [])]
+        check(any((p or "").endswith(".appex") for p in embedded), f"嵌入阶段包含 .appex：{embedded}")
+
+    check(any(objects.get(d, {}).get("target") == ext_target
+              for d in objects.get(app_target, {}).get("dependencies", [])),
+          "App 依赖扩展 target")
+
+
+def check_extension_plist():
+    with (ROOT / "SPlayerRemoteLiveActivity/Info.plist").open("rb") as fh:
+        data = plistlib.load(fh)
+    check(data.get("NSExtension", {}).get("NSExtensionPointIdentifier") == "com.apple.widgetkit-extension",
+          "扩展 Info.plist 声明 widgetkit-extension 扩展点")
+
+
 def check_info_plist():
     with INFO_PLIST.open("rb") as fh:
         data = plistlib.load(fh)
     required = [
         "CFBundleIdentifier", "CFBundleExecutable", "CFBundleShortVersionString", "CFBundleVersion",
         "NSLocalNetworkUsageDescription", "NSAppTransportSecurity", "UISupportedInterfaceOrientations",
+        "NSSupportsLiveActivities",
     ]
     for key in required:
         check(key in data, f"Info.plist 含 {key}")
+    check(data.get("NSSupportsLiveActivities") is True, "Info.plist NSSupportsLiveActivities 为 true")
     ats = data.get("NSAppTransportSecurity", {})
     check(ats.get("NSAllowsArbitraryLoads") is True or ats.get("NSAllowsLocalNetworking") is True,
           "ATS 允许本地 HTTP（记录为宽泛放行）")
@@ -315,9 +363,14 @@ def check_target_membership(parsed):
             paths.append(objects.get(fr, {}).get("path"))
         return paths
 
+    app_swift = {p.relative_to(ROOT).as_posix() for p in (ROOT / "SPlayerRemote").rglob("*.swift")}
+    shared_swift = {p.relative_to(ROOT).as_posix() for p in (ROOT / "SPlayerRemoteShared").rglob("*.swift")}
+    ext_swift = {p.relative_to(ROOT).as_posix() for p in (ROOT / "SPlayerRemoteLiveActivity").rglob("*.swift")}
+    tests_swift = {p.relative_to(ROOT).as_posix() for p in (ROOT / "SPlayerRemoteTests").rglob("*.swift")}
     expectations = {
-        "SPlayerRemote": {p.relative_to(ROOT).as_posix() for p in (ROOT / "SPlayerRemote").rglob("*.swift")},
-        "SPlayerRemoteTests": {p.relative_to(ROOT).as_posix() for p in (ROOT / "SPlayerRemoteTests").rglob("*.swift")},
+        "SPlayerRemote": app_swift | shared_swift,
+        "SPlayerRemoteTests": tests_swift,
+        "SPlayerRemoteLiveActivity": ext_swift | shared_swift,
     }
     for target_id in objects[parsed["rootObject"]].get("targets", []):
         target = objects.get(target_id, {})
@@ -336,8 +389,10 @@ def check_target_membership(parsed):
 def main():
     parsed = check_pbxproj()
     check_test_target_unit_test(parsed)
+    check_extension_target(parsed)
     check_target_membership(parsed)
     check_info_plist()
+    check_extension_plist()
     check_assets()
     check_fixtures()
     check_no_secrets()

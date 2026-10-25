@@ -8,6 +8,7 @@ struct RootView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showSettings = false
     @State private var showDiagnostics = false
+    @State private var showQueue = false
 
     var body: some View {
         ZStack {
@@ -36,7 +37,17 @@ struct RootView: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollBounceBehavior(.basedOnSize)
-            .refreshable { await remote.refreshNow() }
+            .refreshable {
+                await remote.refreshNow()
+                await remote.refreshMetadataNow()
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if remote.connection.isConnected {
+                QueuePillButton { showQueue = true }
+                    .padding(.trailing, 18)
+                    .padding(.bottom, 18)
+            }
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showSettings) {
@@ -45,11 +56,22 @@ struct RootView: View {
         .sheet(isPresented: $showDiagnostics) {
             DiagnosticsView()
         }
+        .sheet(isPresented: $showQueue) {
+            QueueSheet()
+        }
         .onChange(of: scenePhase) { _, phase in
-            let active = phase == .active
-            remote.setSceneActive(active)
-            if active, !showSettings {
-                Task { await remote.connectIfConfigured() }
+            switch phase {
+            case .active:
+                remote.setScenePhase(.active)
+                if !showSettings {
+                    Task { await remote.connectIfConfigured() }
+                }
+            case .inactive:
+                remote.setScenePhase(.inactive)
+            case .background:
+                remote.setScenePhase(.background)
+            @unknown default:
+                remote.setScenePhase(.background)
             }
         }
         .task {

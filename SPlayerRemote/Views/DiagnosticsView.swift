@@ -28,6 +28,18 @@ struct DiagnosticsView: View {
                     DiagnosticsRow(label: "歌曲标识", value: remote.songId.map { "#\($0)" } ?? "—")
                 }
 
+                Section("元数据（局域网分享，只读）") {
+                    DiagnosticsRow(label: "状态", value: metadataStateText)
+                    DiagnosticsRow(label: "队列曲目数", value: remote.queue.map { "\($0.trackCount)" } ?? "—")
+                    DiagnosticsRow(label: "队列版本", value: remote.queue.map { "\($0.revision)" } ?? "—")
+                    DiagnosticsRow(label: "当前曲目", value: remote.currentTrack?.title ?? "—")
+                    DiagnosticsRow(label: "艺人", value: remote.currentTrack?.artistLine ?? "—")
+                    DiagnosticsRow(label: "歌词", value: lyricText)
+                    if let error = remote.metadataError {
+                        DiagnosticsRow(label: "最近错误", value: error)
+                    }
+                }
+
                 Section("播放（只读）") {
                     DiagnosticsRow(label: "状态", value: remote.playbackState.displayName)
                     DiagnosticsRow(label: "缓冲", value: (remote.isBuffering) ? "是" : "否")
@@ -41,7 +53,7 @@ struct DiagnosticsView: View {
                 }
 
                 Section {
-                    Text("SPlayer 外部 API 仅返回歌曲 ID、进度、音量等状态，不提供标题、艺人或封面，因此本 App 不会虚构这些信息，也不显示媒体地址或原始响应。")
+                    Text("元数据（标题 / 艺人 / 专辑 / 封面 / 队列 / 歌词）来自 SPlayer 的局域网分享接口，仅在开启分享时可用；不可用时 App 只显示歌曲标识，绝不伪造。封面图片使用独立、无凭据的网络会话下载，不会携带令牌或 Cookie。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -105,6 +117,21 @@ struct DiagnosticsView: View {
         let rate = remote.playbackRate
         guard rate.isFinite else { return "—" }
         return String(format: "%.2fx", rate)
+    }
+
+    private var metadataStateText: String {
+        switch remote.metadataState {
+        case .idle: return "尚未获取"
+        case .loading: return "获取中"
+        case .available: return "可用"
+        case .unavailable: return "不可用"
+        }
+    }
+
+    private var lyricText: String {
+        guard let lyric = remote.lyric else { return "—" }
+        if !lyric.isSupported { return "格式不支持（\(lyric.source.format)）" }
+        return lyric.lines.isEmpty ? "暂无" : "\(lyric.lines.count) 行"
     }
 
     // MARK: - Bundle 信息（带兜底）

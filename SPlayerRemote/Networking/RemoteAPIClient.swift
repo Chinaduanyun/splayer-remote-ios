@@ -8,6 +8,10 @@ protocol RemoteAPI {
     func send(command: RemoteCommand) async throws
     func seek(positionMs: Int) async throws
     func setVolume(_ volume: Double) async throws
+    /// 局域网分享队列（只读，可选元数据）。`nil` 表示服务端尚未就绪（`ok:false`）。
+    func fetchLanShareQueue() async throws -> LanShareQueue?
+    /// 局域网分享歌词（只读，可选元数据）。`nil` 表示服务端尚未就绪（`ok:false`）。
+    func fetchLanShareLyric() async throws -> LanShareLyricDocument?
 }
 
 /// 基于 URLSession 的 SPlayer 外部 API 客户端。
@@ -77,6 +81,24 @@ final class RemoteAPIClient: RemoteAPI {
         let request = try APIRequestFactory.volume(clamped, baseURL: baseURL, token: token)
         let data = try await perform(request)
         try requireAcknowledgement(data)
+    }
+
+    // MARK: - 局域网分享元数据
+
+    func fetchLanShareQueue() async throws -> LanShareQueue? {
+        guard let request = APIRequestFactory.lanShareRequest(baseURL: baseURL, endpoint: "getQueue", token: token) else {
+            throw RemoteAPIError.invalidConfiguration("无法构造局域网分享请求。")
+        }
+        let data = try await perform(request)
+        return try LanShareQueue.decode(from: data)
+    }
+
+    func fetchLanShareLyric() async throws -> LanShareLyricDocument? {
+        guard let request = APIRequestFactory.lanShareRequest(baseURL: baseURL, endpoint: "getLyric", token: token) else {
+            throw RemoteAPIError.invalidConfiguration("无法构造局域网分享请求。")
+        }
+        let data = try await perform(request)
+        return try LanShareLyricDocument.decode(from: data)
     }
 
     // MARK: - 内部

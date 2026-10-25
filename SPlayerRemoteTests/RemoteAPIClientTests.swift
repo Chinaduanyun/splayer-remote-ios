@@ -187,6 +187,38 @@ final class RemoteAPIClientTests: XCTestCase {
         await assertError(.unexpectedResponse) { try await self.makeClient().seek(positionMs: 1000) }
     }
 
+    // MARK: - 局域网分享元数据
+
+    func testFetchLanShareQueueUsesPathAndDecodes() async throws {
+        var observed: URLRequest?
+        MockURLProtocol.setHandler { request in
+            observed = request
+            return (200, LanShareFixtures.queueJSON)
+        }
+        let queue = try await makeClient().fetchLanShareQueue()
+        let unwrapped = try XCTUnwrap(queue)
+        XCTAssertEqual(unwrapped.revision, 11)
+        XCTAssertEqual(unwrapped.trackCount, 3)
+
+        let request = try XCTUnwrap(observed)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.url?.path, "/api/lanShare/getQueue")
+        XCTAssertEqual(request.url?.host, "192.168.31.100")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret-token")
+        XCTAssertFalse((request.url?.absoluteString ?? "").contains("secret-token"))
+    }
+
+    func testLanShareForbiddenMapsToForbidden() async {
+        MockURLProtocol.setHandler { _ in (403, Data(#"{"error":"FORBIDDEN"}"#.utf8)) }
+        await assertError(.forbidden) { _ = try await self.makeClient().fetchLanShareQueue() }
+    }
+
+    func testLanShareNotReadyReturnsNil() async throws {
+        MockURLProtocol.setHandler { _ in (200, LanShareFixtures.queueNotReady) }
+        let queue = try await makeClient().fetchLanShareQueue()
+        XCTAssertNil(queue)
+    }
+
     // MARK: - Helpers
 
     private func assertError(

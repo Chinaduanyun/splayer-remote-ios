@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var tokenDraft = ""
     @State private var useWebSocketDraft = true
     @State private var autoConnectDraft = false
+    @State private var liveActivityDraft = false
     @State private var didLoadDrafts = false
 
     @State private var validationMessage: String?
@@ -40,10 +41,14 @@ struct SettingsView: View {
                 Section {
                     Toggle("实时状态（WebSocket）", isOn: $useWebSocketDraft)
                     Toggle("启动时自动连接", isOn: $autoConnectDraft)
+                    Toggle("锁屏 / 灵动岛实时活动", isOn: $liveActivityDraft)
+                        .onChange(of: liveActivityDraft) { _, enabled in
+                            remote.setLiveActivityEnabled(enabled)
+                        }
                 } header: {
                     Text("连接偏好")
                 } footer: {
-                    Text("启用后会尝试建立只读实时通道；不可用时自动回退到 HTTP 轮询，不影响控制。自动连接仅在已保存有效主机与令牌时生效。")
+                    Text("启用后会尝试建立只读实时通道；不可用时自动回退到 HTTP 轮询，不影响控制。自动连接仅在已保存有效主机与令牌时生效。实时活动需系统允许，且仅在 App 已连接时提供上一曲 / 播放暂停 / 下一曲。")
                 }
 
                 Section {
@@ -122,6 +127,7 @@ struct SettingsView: View {
         tokenDraft = settings.token
         useWebSocketDraft = settings.useWebSocket
         autoConnectDraft = settings.autoConnect
+        liveActivityDraft = settings.liveActivityEnabled
     }
 
     private func saveAndConnect() async {

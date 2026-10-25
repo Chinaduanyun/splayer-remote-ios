@@ -23,6 +23,12 @@
 			path = "SPlayerRemote/Models/RemoteEvents.swift";
 			sourceTree = "<group>";
 		};
+		D5B1FC3A21AD98D22AD00294 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemote/Models/LanShareModels.swift";
+			sourceTree = "<group>";
+		};
 		1E1874F37AD5B9CD73D988B5 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -53,6 +59,12 @@
 			path = "SPlayerRemote/Networking/WebSocketTransport.swift";
 			sourceTree = "<group>";
 		};
+		F0389D2D700A612DBE6BC21B = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemote/Networking/CoverImageLoader.swift";
+			sourceTree = "<group>";
+		};
 		A9E632176E540DF79606D63A = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -63,6 +75,24 @@
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
 			path = "SPlayerRemote/Persistence/SettingsStore.swift";
+			sourceTree = "<group>";
+		};
+		0F61C5392E7C5D6AAF31312D = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemote/LiveActivity/LiveActivitySupport.swift";
+			sourceTree = "<group>";
+		};
+		0D8E28DAF6C65CC2F13DEA32 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemote/LiveActivity/LiveActivityController.swift";
+			sourceTree = "<group>";
+		};
+		13142D41CCE1DAED35FA017B = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemote/LiveActivity/RemoteIntentCommandExecutor.swift";
 			sourceTree = "<group>";
 		};
 		7C2B7F0475F6B90BF118074E = {
@@ -83,6 +113,12 @@
 			path = "SPlayerRemote/Views/Components.swift";
 			sourceTree = "<group>";
 		};
+		9019FF4B9999C8EDE70E7E4B = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemote/Views/MetadataViews.swift";
+			sourceTree = "<group>";
+		};
 		9C9BDFF776C66A6658DE10C6 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -99,6 +135,24 @@
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
 			path = "SPlayerRemote/Views/DiagnosticsView.swift";
+			sourceTree = "<group>";
+		};
+		600881525C75179E749FFA8A = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemoteShared/RemoteActivityAttributes.swift";
+			sourceTree = "<group>";
+		};
+		D89EEF9759B475E4EF3CF5A7 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemoteLiveActivity/SPlayerRemoteLiveActivityBundle.swift";
+			sourceTree = "<group>";
+		};
+		FD76A3CC76D4811B79BD70E6 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemoteLiveActivity/RemotePlaybackLiveActivity.swift";
 			sourceTree = "<group>";
 		};
 		88B0AA3523551978E3379768 = {
@@ -155,6 +209,30 @@
 			path = "SPlayerRemoteTests/WebSocketTransportTests.swift";
 			sourceTree = "<group>";
 		};
+		171D7CB9F7061A5E8A5D174B = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemoteTests/LanShareTests.swift";
+			sourceTree = "<group>";
+		};
+		7809E5F62C15233F5A2A5F7D = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemoteTests/CoverImageLoaderTests.swift";
+			sourceTree = "<group>";
+		};
+		49FBA05105D79DABE78E5477 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemoteTests/V12ViewModelTests.swift";
+			sourceTree = "<group>";
+		};
+		6DB9B8CE0D68D7B05119CC3B = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemoteTests/LiveActivityModelTests.swift";
+			sourceTree = "<group>";
+		};
 		6316458738A4F146D22011C9 = {
 			isa = PBXFileReference;
 			lastKnownFileType = folder.assetcatalog;
@@ -165,6 +243,12 @@
 			isa = PBXFileReference;
 			lastKnownFileType = text.plist.xml;
 			path = "SPlayerRemote/Info.plist";
+			sourceTree = "<group>";
+		};
+		705B2C91E9142149F2FBC2E9 = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.xml;
+			path = "SPlayerRemoteLiveActivity/Info.plist";
 			sourceTree = "<group>";
 		};
 		84337AD8D27FCD69AF2C4FC2 = {
@@ -181,6 +265,13 @@
 			path = SPlayerRemoteTests.xctest;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
+		CFEE55A02984C083C52C8EFC = {
+			isa = PBXFileReference;
+			explicitFileType = "wrapper.app-extension";
+			includeInIndex = 0;
+			path = SPlayerRemoteLiveActivity.appex;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
 		021B978058974C0B986BE53F = {
 			isa = PBXBuildFile;
 			fileRef = 9D181686504E68AFB29ADAA7 /* SPlayerRemoteApp.swift */;
@@ -192,6 +283,10 @@
 		0464D1428006AA3727605446 = {
 			isa = PBXBuildFile;
 			fileRef = 9B53EBE65A90D39F950AF4AD /* RemoteEvents.swift */;
+		};
+		9BB95BAA15FFD4935043FAE4 = {
+			isa = PBXBuildFile;
+			fileRef = D5B1FC3A21AD98D22AD00294 /* LanShareModels.swift */;
 		};
 		9417F70C73997A67B4C6BABF = {
 			isa = PBXBuildFile;
@@ -213,6 +308,10 @@
 			isa = PBXBuildFile;
 			fileRef = 965DBC1833D682850E4B3714 /* WebSocketTransport.swift */;
 		};
+		A13B8B76E49F50B1D44F88D0 = {
+			isa = PBXBuildFile;
+			fileRef = F0389D2D700A612DBE6BC21B /* CoverImageLoader.swift */;
+		};
 		F3B74E363D27F3C57893F495 = {
 			isa = PBXBuildFile;
 			fileRef = A9E632176E540DF79606D63A /* KeychainStore.swift */;
@@ -220,6 +319,18 @@
 		CD226F39918AA813B205B8FF = {
 			isa = PBXBuildFile;
 			fileRef = 4B88196A8F529D211998B1AA /* SettingsStore.swift */;
+		};
+		FA939B1CC80C18D629C3CB14 = {
+			isa = PBXBuildFile;
+			fileRef = 0F61C5392E7C5D6AAF31312D /* LiveActivitySupport.swift */;
+		};
+		45D3BC0CDD0EE0140F75A488 = {
+			isa = PBXBuildFile;
+			fileRef = 0D8E28DAF6C65CC2F13DEA32 /* LiveActivityController.swift */;
+		};
+		CB820480D09B0D4B6A4A3D1A = {
+			isa = PBXBuildFile;
+			fileRef = 13142D41CCE1DAED35FA017B /* RemoteIntentCommandExecutor.swift */;
 		};
 		EB3C187B64C9FD78BED72806 = {
 			isa = PBXBuildFile;
@@ -233,6 +344,10 @@
 			isa = PBXBuildFile;
 			fileRef = F5115F8071A0AE3C24008A48 /* Components.swift */;
 		};
+		255F86ED5318157E95F19E1E = {
+			isa = PBXBuildFile;
+			fileRef = 9019FF4B9999C8EDE70E7E4B /* MetadataViews.swift */;
+		};
 		689AD35A1038D20667A03DF0 = {
 			isa = PBXBuildFile;
 			fileRef = 9C9BDFF776C66A6658DE10C6 /* RootView.swift */;
@@ -244,6 +359,10 @@
 		C06BC8AE000652FDF1239331 = {
 			isa = PBXBuildFile;
 			fileRef = 272C4550EA566FEB98516FCE /* DiagnosticsView.swift */;
+		};
+		B93E4CB98F8BE265B943C6C6 = {
+			isa = PBXBuildFile;
+			fileRef = 600881525C75179E749FFA8A /* RemoteActivityAttributes.swift */;
 		};
 		972A0A2912F551E63CD33C23 = {
 			isa = PBXBuildFile;
@@ -285,22 +404,65 @@
 			isa = PBXBuildFile;
 			fileRef = D1477DE44C6B9C53568C6E70 /* WebSocketTransportTests.swift */;
 		};
+		5EB4FEB0C09B93C123C8BFB0 = {
+			isa = PBXBuildFile;
+			fileRef = 171D7CB9F7061A5E8A5D174B /* LanShareTests.swift */;
+		};
+		E65377AA5A4FC72945244E9A = {
+			isa = PBXBuildFile;
+			fileRef = 7809E5F62C15233F5A2A5F7D /* CoverImageLoaderTests.swift */;
+		};
+		D4499E0FAD8F7DB7A69D3300 = {
+			isa = PBXBuildFile;
+			fileRef = 49FBA05105D79DABE78E5477 /* V12ViewModelTests.swift */;
+		};
+		6540EF45B47B741C48B6E68E = {
+			isa = PBXBuildFile;
+			fileRef = 6DB9B8CE0D68D7B05119CC3B /* LiveActivityModelTests.swift */;
+		};
+		44009BEAAB1A2C74C30569A1 = {
+			isa = PBXBuildFile;
+			fileRef = D89EEF9759B475E4EF3CF5A7 /* SPlayerRemoteLiveActivityBundle.swift */;
+		};
+		B8F67C3CF02AC4F1C0F2908D = {
+			isa = PBXBuildFile;
+			fileRef = FD76A3CC76D4811B79BD70E6 /* RemotePlaybackLiveActivity.swift */;
+		};
+		FA4BF8935421C1FA06A0962D = {
+			isa = PBXBuildFile;
+			fileRef = 600881525C75179E749FFA8A /* RemoteActivityAttributes.swift */;
+		};
+		A268918424F7BBC11DB752F2 = {
+			isa = PBXBuildFile;
+			fileRef = CFEE55A02984C083C52C8EFC /* SPlayerRemoteLiveActivity.appex */;
+			settings = {
+				ATTRIBUTES = (
+					RemoveHeadersOnCopy,
+				);
+			};
+		};
 		82CF2A43A7100F086D7FCFDD = {
 			isa = PBXGroup;
 			children = (
 				9D181686504E68AFB29ADAA7,
 				6337A7AF609E8221FC87E10F,
 				9B53EBE65A90D39F950AF4AD,
+				D5B1FC3A21AD98D22AD00294,
 				1E1874F37AD5B9CD73D988B5,
 				72CF6A32E4F43515FA7A6226,
 				310788BC488B8A2BE1C7A402,
 				6461D2940EAF8890CFBFE049,
 				965DBC1833D682850E4B3714,
+				F0389D2D700A612DBE6BC21B,
 				A9E632176E540DF79606D63A,
 				4B88196A8F529D211998B1AA,
+				0F61C5392E7C5D6AAF31312D,
+				0D8E28DAF6C65CC2F13DEA32,
+				13142D41CCE1DAED35FA017B,
 				7C2B7F0475F6B90BF118074E,
 				0AF45A2DCEC90C0A1163DA7F,
 				F5115F8071A0AE3C24008A48,
+				9019FF4B9999C8EDE70E7E4B,
 				9C9BDFF776C66A6658DE10C6,
 				9039B7E66CC6003C28D07B76,
 				272C4550EA566FEB98516FCE,
@@ -308,6 +470,24 @@
 				73764CAC5E1342BF8692E66B,
 			);
 			name = "SPlayerRemote";
+			sourceTree = "<group>";
+		};
+		9CB302E9C7F6377B351DBEAB = {
+			isa = PBXGroup;
+			children = (
+				600881525C75179E749FFA8A,
+			);
+			name = "SPlayerRemoteShared";
+			sourceTree = "<group>";
+		};
+		DB327C33F92CA665BC172BE0 = {
+			isa = PBXGroup;
+			children = (
+				D89EEF9759B475E4EF3CF5A7,
+				FD76A3CC76D4811B79BD70E6,
+				705B2C91E9142149F2FBC2E9,
+			);
+			name = "SPlayerRemoteLiveActivity";
 			sourceTree = "<group>";
 		};
 		A0937472EE5878FA82CB0F7E = {
@@ -322,6 +502,10 @@
 				EA3C32A336FA5582EF89EBC9,
 				A97AE3D40C4AA6E20A936901,
 				D1477DE44C6B9C53568C6E70,
+				171D7CB9F7061A5E8A5D174B,
+				7809E5F62C15233F5A2A5F7D,
+				49FBA05105D79DABE78E5477,
+				6DB9B8CE0D68D7B05119CC3B,
 			);
 			name = "SPlayerRemoteTests";
 			sourceTree = "<group>";
@@ -331,6 +515,7 @@
 			children = (
 				84337AD8D27FCD69AF2C4FC2,
 				DFDED23FA58339F9273F6C84,
+				CFEE55A02984C083C52C8EFC,
 			);
 			name = "Products";
 			sourceTree = "<group>";
@@ -339,6 +524,8 @@
 			isa = PBXGroup;
 			children = (
 				82CF2A43A7100F086D7FCFDD,
+				9CB302E9C7F6377B351DBEAB,
+				DB327C33F92CA665BC172BE0,
 				A0937472EE5878FA82CB0F7E,
 				547D009064F7C3F13BEF3460,
 			);
@@ -351,19 +538,26 @@
 				021B978058974C0B986BE53F /* SPlayerRemoteApp.swift */,
 				B8280F2BDA1E529ECEBDC993 /* RemoteModels.swift */,
 				0464D1428006AA3727605446 /* RemoteEvents.swift */,
+				9BB95BAA15FFD4935043FAE4 /* LanShareModels.swift */,
 				9417F70C73997A67B4C6BABF /* RemoteAPIError.swift */,
 				A16EBFCCD16C488DABFC6685 /* HostValidator.swift */,
 				C8F0251B9B82FA5DCEDAD139 /* APIRequestFactory.swift */,
 				AEC64A11FB20C67539E78B81 /* RemoteAPIClient.swift */,
 				F59E4F86284EC48479F1AF83 /* WebSocketTransport.swift */,
+				A13B8B76E49F50B1D44F88D0 /* CoverImageLoader.swift */,
 				F3B74E363D27F3C57893F495 /* KeychainStore.swift */,
 				CD226F39918AA813B205B8FF /* SettingsStore.swift */,
+				FA939B1CC80C18D629C3CB14 /* LiveActivitySupport.swift */,
+				45D3BC0CDD0EE0140F75A488 /* LiveActivityController.swift */,
+				CB820480D09B0D4B6A4A3D1A /* RemoteIntentCommandExecutor.swift */,
 				EB3C187B64C9FD78BED72806 /* RemoteViewModel.swift */,
 				4414E4709282EF16FBF95B0C /* GlassSupport.swift */,
 				3ED2BF2AE759547B6C0A6E68 /* Components.swift */,
+				255F86ED5318157E95F19E1E /* MetadataViews.swift */,
 				689AD35A1038D20667A03DF0 /* RootView.swift */,
 				5C185E9B6B4F4C92BFFB6D20 /* SettingsView.swift */,
 				C06BC8AE000652FDF1239331 /* DiagnosticsView.swift */,
+				B93E4CB98F8BE265B943C6C6 /* RemoteActivityAttributes.swift */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -395,6 +589,10 @@
 				82E31F1EC7D00A6DC4F7F7E4 /* RemoteSocketTests.swift */,
 				61E24D800853C069DE4BEC1C /* RemoteViewModelWebSocketTests.swift */,
 				6A3F2922509FCF2526F07A21 /* WebSocketTransportTests.swift */,
+				5EB4FEB0C09B93C123C8BFB0 /* LanShareTests.swift */,
+				E65377AA5A4FC72945244E9A /* CoverImageLoaderTests.swift */,
+				D4499E0FAD8F7DB7A69D3300 /* V12ViewModelTests.swift */,
+				6540EF45B47B741C48B6E68E /* LiveActivityModelTests.swift */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -405,6 +603,41 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		95DAD0AC89EF1F52E2DEFFA0 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				44009BEAAB1A2C74C30569A1 /* SPlayerRemoteLiveActivityBundle.swift */,
+				B8F67C3CF02AC4F1C0F2908D /* RemotePlaybackLiveActivity.swift */,
+				FA4BF8935421C1FA06A0962D /* RemoteActivityAttributes.swift */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		82F7385D4FEF2F2E8083F7F6 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6D28937945D4D810B2D340B2 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		496AF46EC2762DDF91F78F13 = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A268918424F7BBC11DB752F2 /* SPlayerRemoteLiveActivity.appex */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		E3435DDA2687639586BF0B70 = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 5505F9AF814A7F0992DE2402 /* Build configuration list for PBXNativeTarget "SPlayerRemote" */;
@@ -412,15 +645,46 @@
 				4821909E9BF9E73E471FEA84 /* Sources */,
 				6EFAB1ECC0D092E20FE51FCD /* Frameworks */,
 				F667297ED3AB90EAC07798D4 /* Resources */,
+				496AF46EC2762DDF91F78F13 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				2B7974FFAADD53FC1643D4E7 /* PBXTargetDependency */,
 			);
 			name = "SPlayerRemote";
 			productName = "SPlayerRemote";
 			productReference = 84337AD8D27FCD69AF2C4FC2 /* SPlayerRemote.app */;
 			productType = "com.apple.product-type.application";
+		};
+		3B349027366F684A61204B00 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3D5B5193CF8AC4E310989886 /* Build configuration list for PBXNativeTarget "SPlayerRemoteLiveActivity" */;
+			buildPhases = (
+				95DAD0AC89EF1F52E2DEFFA0 /* Sources */,
+				82F7385D4FEF2F2E8083F7F6 /* Frameworks */,
+				6D28937945D4D810B2D340B2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "SPlayerRemoteLiveActivity";
+			productName = "SPlayerRemoteLiveActivity";
+			productReference = CFEE55A02984C083C52C8EFC /* SPlayerRemoteLiveActivity.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		757E32E07016D14EAC875D70 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 46F86FAA6BBF9AC94A7E4595 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3B349027366F684A61204B00;
+			remoteInfo = SPlayerRemoteLiveActivity;
+		};
+		2B7974FFAADD53FC1643D4E7 = {
+			isa = PBXTargetDependency;
+			target = 3B349027366F684A61204B00 /* SPlayerRemoteLiveActivity */;
+			targetProxy = 757E32E07016D14EAC875D70 /* PBXContainerItemProxy */;
 		};
 		193D0A8035DE97CF1A3652FD = {
 			isa = PBXContainerItemProxy;
@@ -461,6 +725,9 @@
 					E3435DDA2687639586BF0B70 = {
 						CreatedOnToolsVersion = 16.0;
 					};
+					3B349027366F684A61204B00 = {
+						CreatedOnToolsVersion = 16.0;
+					};
 					A700229C3AC2DAE057FE5B27 = {
 						CreatedOnToolsVersion = 16.0;
 						TestTargetID = E3435DDA2687639586BF0B70;
@@ -482,6 +749,7 @@
 			projectRoot = "";
 			targets = (
 				E3435DDA2687639586BF0B70 /* SPlayerRemote */,
+				3B349027366F684A61204B00 /* SPlayerRemoteLiveActivity */,
 				A700229C3AC2DAE057FE5B27 /* SPlayerRemoteTests */,
 			);
 		};
@@ -559,16 +827,17 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "SPlayerRemote/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
-				MARKETING_VERSION = 1.1;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = ("APP_TARGET", "DEBUG");
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -581,16 +850,17 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "SPlayerRemote/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
-				MARKETING_VERSION = 1.1;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = ("APP_TARGET");
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -602,10 +872,10 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.1;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote.tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -621,10 +891,10 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.1;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote.tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -632,6 +902,48 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SPlayerRemote.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SPlayerRemote";
+			};
+			name = Release;
+		};
+		B520CBA51EE7BE0AFC6DE36C = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "SPlayerRemoteLiveActivity/Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks");
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote.liveactivity";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		187E766CB5AFF869D9F72C9F = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "SPlayerRemoteLiveActivity/Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks");
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.example.splayerremote.liveactivity";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -658,6 +970,15 @@
 			buildConfigurations = (
 				58F04E6CEF79D04D48A072E5 /* Debug */,
 				8BEF7D6F48ABC8DA506281C2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3D5B5193CF8AC4E310989886 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B520CBA51EE7BE0AFC6DE36C /* Debug */,
+				187E766CB5AFF869D9F72C9F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

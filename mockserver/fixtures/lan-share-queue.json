@@ -1,0 +1,36 @@
+{
+  "ok": true,
+  "revision": 11,
+  "data": {
+    "playIndex": 0,
+    "tracks": [
+      {
+        "id": "19827042",
+        "source": "netease",
+        "title": "Example song one",
+        "artists": [{ "id": "1", "name": "Example artist" }],
+        "album": { "id": "2", "name": "Example album", "cover": "https://example.invalid/cover.jpg" },
+        "duration": 213266,
+        "cover": "https://example.invalid/cover.jpg"
+      },
+      {
+        "id": "55",
+        "source": "netease",
+        "title": "Example song two",
+        "artists": [{ "id": "3", "name": "Example artist two" }],
+        "album": { "id": "4", "name": "Example album two", "cover": "https://example.invalid/cover2.jpg" },
+        "duration": 180000,
+        "cover": "https://example.invalid/cover2.jpg"
+      },
+      {
+        "id": "77",
+        "source": "local",
+        "title": "Example song three",
+        "artists": [{ "id": "5", "name": "Example artist three" }],
+        "album": { "id": "6", "name": "Example album three", "cover": "https://example.invalid/cover3.jpg" },
+        "duration": 245000,
+        "cover": "https://example.invalid/cover3.jpg"
+      }
+    ]
+  }
+}

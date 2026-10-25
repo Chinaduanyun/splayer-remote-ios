@@ -61,4 +61,22 @@ final class RequestEncodingTests: XCTestCase {
         let data = try APIRequestFactory.jsonBody(["b": 1, "a": 2])
         XCTAssertEqual(String(data: data, encoding: .utf8), #"{"a":2,"b":1}"#)
     }
+
+    // MARK: - 局域网分享请求（同一次连接捕获的主机 + 端口，路径替换）
+
+    func testLanShareRequestReplacesPathKeepsHostPort() throws {
+        let request = try XCTUnwrap(APIRequestFactory.lanShareRequest(baseURL: baseURL, endpoint: "getQueue", token: "secret-token"))
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.url?.absoluteString, "http://192.168.31.100:6688/api/lanShare/getQueue")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer secret-token")
+        XCTAssertFalse((request.url?.absoluteString ?? "").contains("secret-token"))
+    }
+
+    func testLanShareRequestHandlesIPv6Host() throws {
+        let ipv6Base = URL(string: "http://[fe80::1]:6688/api/external")!
+        let request = try XCTUnwrap(APIRequestFactory.lanShareRequest(baseURL: ipv6Base, endpoint: "getLyric", token: "t"))
+        XCTAssertEqual(request.url?.path, "/api/lanShare/getLyric")
+        XCTAssertEqual(request.url?.port, 6688)
+        XCTAssertEqual(request.url?.host, "fe80::1")
+    }
 }

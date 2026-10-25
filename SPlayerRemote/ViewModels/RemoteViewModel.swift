@@ -42,6 +42,22 @@ final class RemoteViewModel: ObservableObject {
         }
     }
 
+    /// 场景阶段：区分 `.inactive`（控制中心 / 切换器过渡）与真正的 `.background`。
+    /// `.inactive` 尽力保留健康的会话；只有 `.background` 才暂停长时间网络工作。
+    enum ScenePhaseState: Equatable {
+        case active
+        case inactive
+        case background
+    }
+
+    /// 局域网分享元数据的可用性（与控制能力完全解耦）。
+    enum MetadataState: Equatable {
+        case idle
+        case loading
+        case available
+        case unavailable
+    }
+
     @Published private(set) var connection: ConnectionState = .disconnected
     @Published private(set) var info: InfoResponse?
     @Published private(set) var status: StatusResponse?
@@ -63,6 +79,19 @@ final class RemoteViewModel: ObservableObject {
     @Published private(set) var isReady: Bool?
     @Published private(set) var remoteErrorCode: Int?
 
+    // MARK: - 局域网分享元数据（只读，诚实地报告可用性）
+
+    /// 队列快照（`/api/lanShare/getQueue`）。`nil` 表示尚未获取或不可用。
+    @Published private(set) var queue: LanShareQueue?
+    /// 按外部 `songId` 匹配到的当前曲目（绝不依赖可能过期的 `playIndex`）。
+    @Published private(set) var currentTrack: LanShareTrack?
+    /// 当前曲目歌词（`/api/lanShare/getLyric`）。
+    @Published private(set) var lyric: LanShareLyricDocument?
+    /// 元数据可用性；绝不与控制能力或 REST 健康度耦合。
+    @Published private(set) var metadataState: MetadataState = .idle
+    /// 最近一次元数据错误（仅面向用户的简短文案，不含原始响应）。
+    @Published private(set) var metadataError: String?
+
     /// 滑杆草稿；为 nil 时表示跟随远端轮询值。
     @Published var volumeDraft: Double?
     @Published var seekDraft: Double?
@@ -83,8 +112,23 @@ final class RemoteViewModel: ObservableObject {
     private var generation = 0
     private var socketGeneration = 0
     private var reconnectAttempt = 0
-    private var isSceneActive = true
+    private var scenePhase: ScenePhaseState = .active
+    private var wasBackgrounded = false
     private var suppressAutoConnect = false
+
+    /// 元数据请求世代 / 互斥，避免重叠或迟到的响应覆盖新曲目。
+    private var metadataGeneration = 0
+    private var isMetadataFetchInFlight = false
+    private var lastMetadataAttempt: Date?
+    private let metadataRetryInterval: TimeInterval
+
+    /// 回前台后立即刷新（不先睡眠）；断开 / 后台时取消。
+    private var foregroundRefreshTask: Task<Void, Never>?
+
+    /// Live Activity 呈现（可空：测试与未启用时为空实现 / nil）。
+    private let liveActivity: LiveActivityPresenting?
+    /// 场景是否不处于后台（`.active` 与 `.inactive` 均视为前台）。
+    private var isSceneActive: Bool { scenePhase != .background }
 
     /// 本次连接的不可变配置：REST + WS 重试共用，绝不读取编辑中的设置。
     private var activeConfiguration: ConnectionConfiguration?
@@ -128,6 +172,8 @@ final class RemoteViewModel: ObservableObject {
         socketFactory: RemoteSocketFactory? = nil,
         wsPollIntervalNanoseconds: UInt64 = 5_000_000_000,
         reconnectDelays: [UInt64] = [1_000_000_000, 2_000_000_000, 4_000_000_000, 8_000_000_000],
+        metadataRetryInterval: TimeInterval = 15,
+        liveActivity: LiveActivityPresenting? = nil,
         monotonicNow: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         dateProvider: @escaping () -> Date = { Date() }
     ) {
@@ -137,6 +183,8 @@ final class RemoteViewModel: ObservableObject {
         self.socketFactory = socketFactory
         self.wsPollIntervalNanoseconds = wsPollIntervalNanoseconds
         self.reconnectDelays = reconnectDelays.isEmpty ? [1_000_000_000] : reconnectDelays
+        self.metadataRetryInterval = metadataRetryInterval
+        self.liveActivity = liveActivity
         self.monotonicNow = monotonicNow
         self.dateProvider = dateProvider
     }
@@ -238,6 +286,7 @@ final class RemoteViewModel: ObservableObject {
         nowPlaying = nil
         trackedSongId = nil
         progressAnchor = nil
+        resetMetadata()
 
         do {
             // info 与 status 都必须成功，才认为连接“好”。
@@ -274,6 +323,9 @@ final class RemoteViewModel: ObservableObject {
             updateProgressAnchor(authoritativePosition: rawPositionMs)
             startPolling()
             startSocketIfNeeded()
+            recomputeCurrentTrack()
+            refreshMetadata(force: true)
+            notifyLiveActivity()
         } catch {
             guard gen == generation, !Task.isCancelled else { return }
             client = nil
@@ -292,9 +344,15 @@ final class RemoteViewModel: ObservableObject {
     }
 
     func disconnect(resetState: Bool = true) {
+        // 连接世代变化：立即作废任何进行中的拖动手势，旧手势释放不得提交到新连接。
+        if isAdjustingSeek || seekDragIdentity != nil {
+            seekDraftInvalidated = true
+        }
         generation += 1
         connectionTask?.cancel()
         connectionTask = nil
+        foregroundRefreshTask?.cancel()
+        foregroundRefreshTask = nil
         stopPolling()
         teardownSocket()
         invalidateCommand()
@@ -315,7 +373,7 @@ final class RemoteViewModel: ObservableObject {
             isAdjustingVolume = false
             isAdjustingSeek = false
             seekDragIdentity = nil
-            seekDraftInvalidated = false
+            // 不重置 seekDraftInvalidated：保留对旧手势释放的拦截，直到下一次 begin 重置。
             wsClientCount = nil
             lastSuccessfulUpdate = nil
             lastSuccessfulRestUpdate = nil
@@ -324,43 +382,79 @@ final class RemoteViewModel: ObservableObject {
             remoteErrorCode = nil
             progressAnchor = nil
             trackedSongId = nil
+            resetMetadata()
         }
     }
 
-    /// 用户主动断开：同时抑制后续前台自动重连，直到再次手动连接。
+    /// 用户主动断开：同时抑制后续前台自动重连，直到再次手动连接；结束 Live Activity。
     func disconnectByUser() {
         suppressAutoConnect = true
+        liveActivity?.end()
         disconnect()
     }
 
-    /// 由场景阶段驱动：进入后台时取消所有网络工作；回到前台且已连接时恢复轮询与 socket。
+    /// 兼容入口：`active == true` 等价 `.active`，`false` 等价 `.background`。
     func setSceneActive(_ active: Bool) {
-        isSceneActive = active
-        if active {
-            if connection.isConnected {
-                updateProgressAnchor()
-                startPolling()
-                startSocketIfNeeded()
-            }
-        } else {
-            generation += 1
-            connectionTask?.cancel()
-            connectionTask = nil
-            stopPolling()
-            teardownSocket()
-            invalidateCommand()
-            isStale = true
-            volumeDraft = nil
-            if isAdjustingSeek { seekDraftInvalidated = true }
-            isAdjustingVolume = false
-            isAdjustingSeek = false
-            seekDraft = nil
-            updateProgressAnchor()
-            transport = (activeConfiguration?.useWebSocket == true) ? .fallback : .disabled
-            if connection == .connecting {
-                client = nil
-                connection = .disconnected
-            }
+        setScenePhase(active ? .active : .background)
+    }
+
+    /// 由场景阶段驱动。
+    ///
+    /// - `.inactive`（控制中心 / 切换器过渡）：尽力保留健康会话，不动网络。
+    /// - `.background`：按 iOS 要求暂停长时间网络工作，但**不丢弃**已鉴权的逻辑会话与不可变配置。
+    /// - `.active`：若刚从后台回来且逻辑上仍连接，立即刷新一次 HTTP（不先睡眠）并恢复实时通道。
+    func setScenePhase(_ phase: ScenePhaseState) {
+        guard scenePhase != phase else { return }
+        let wentBackground = phase == .background
+        scenePhase = phase
+        switch phase {
+        case .active:
+            handleForeground()
+        case .inactive:
+            break // 尽力保留健康会话。
+        case .background:
+            handleBackground()
+        }
+        if wentBackground { wasBackgrounded = true }
+    }
+
+    private func handleBackground() {
+        generation += 1
+        foregroundRefreshTask?.cancel()
+        foregroundRefreshTask = nil
+        connectionTask?.cancel()
+        connectionTask = nil
+        stopPolling()
+        teardownSocket()
+        invalidateCommand()
+        isStale = true
+        volumeDraft = nil
+        if isAdjustingSeek { seekDraftInvalidated = true }
+        isAdjustingVolume = false
+        isAdjustingSeek = false
+        seekDraft = nil
+        updateProgressAnchor()
+        transport = (activeConfiguration?.useWebSocket == true) ? .fallback : .disabled
+        if connection == .connecting {
+            client = nil
+            connection = .disconnected
+        }
+    }
+
+    private func handleForeground() {
+        // 仅当确实经历过后台才需要恢复；`.inactive` -> `.active` 保持现状。
+        guard wasBackgrounded else { return }
+        wasBackgrounded = false
+        guard connection.isConnected, client != nil else { return }
+        updateProgressAnchor()
+        startPolling()
+        startSocketIfNeeded()
+        // 立即刷新一次 HTTP（不先睡眠 2/5 秒）；世代 / 前台门控保证安全。
+        let gen = generation
+        foregroundRefreshTask?.cancel()
+        foregroundRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.pollOnce(expectedGeneration: gen)
         }
     }
 
@@ -436,11 +530,14 @@ final class RemoteViewModel: ObservableObject {
             // 仅仅更新客户端数；不视为状态快照，不清除过期、不恢复 REST 可用性。
             if let clients { wsClientCount = clients }
         case .stateChanged(let payload):
-            // 只有携带可验证状态的事件才能清除「过期」；空/仅 src/仅音量不在此列。
-            if payload.isStatusBearing { isStale = false }
+            // 仅「完整且合法」的快照才能恢复播放新鲜度；partial / 非法时间不得清除过期。
+            if payload.isFreshPlaybackSnapshot { isStale = false }
             applyStateChanged(payload)
-            if payload.isStatusBearing {
+            // 排序屏障独立于新鲜度：任何已合并的共享字段 partial 都必须阻止旧轮询覆盖。
+            if payload.mutatesSharedState {
                 wsArrivalCount += 1
+            }
+            if payload.isFreshPlaybackSnapshot {
                 lastSuccessfulUpdate = dateProvider()
                 lastError = nil
             }
@@ -462,6 +559,8 @@ final class RemoteViewModel: ObservableObject {
             nowPlaying?.songId = songId
             if songId != previousSongId {
                 invalidateSeekDragIfNeeded(newSongId: songId)
+                recomputeCurrentTrack()
+                refreshMetadata(force: true)
             }
         }
 
@@ -512,6 +611,7 @@ final class RemoteViewModel: ObservableObject {
             return nil
         }()
         updateProgressAnchor(authoritativePosition: authoritativePosition)
+        notifyLiveActivity()
     }
 
     /// `ended` 没有 data：不制造位置，只把状态收敛为非播放并冻结在当前位置。
@@ -591,6 +691,8 @@ final class RemoteViewModel: ObservableObject {
             trackedSongId = freshNow.songId
             if freshNow.songId != previousSongId {
                 invalidateSeekDragIfNeeded(newSongId: freshNow.songId)
+                recomputeCurrentTrack()
+                refreshMetadata(force: true)
             }
             if !isAdjustingVolume { volumeDraft = nil }
             if !isAdjustingSeek { seekDraft = nil }
@@ -602,6 +704,8 @@ final class RemoteViewModel: ObservableObject {
             lastSuccessfulUpdate = now
             lastSuccessfulRestUpdate = now
             updateProgressAnchor(authoritativePosition: rawPositionMs)
+            notifyLiveActivity()
+            scheduleMetadataCalibrationIfNeeded()
         } catch {
             guard gen == generation, isSceneActive, !Task.isCancelled else { return }
             if let apiError = error as? RemoteAPIError, case .cancelled = apiError { return }
@@ -614,6 +718,7 @@ final class RemoteViewModel: ObservableObject {
                 isRestDegraded = true
                 connection = .failed(message(for: error))
                 lastError = message(for: error)
+                liveActivity?.end()
             } else {
                 // 非致命（网络等）：保持轮询自动重试，但标记数据过期并冻结进度（不回退）。
                 isStale = true
@@ -686,15 +791,22 @@ final class RemoteViewModel: ObservableObject {
             seekDraftInvalidated = false
             isAdjustingSeek = true
         } else {
+            let gesture = seekDragIdentity
+            let invalidated = seekDraftInvalidated
             isAdjustingSeek = false
-            defer {
-                seekDragIdentity = nil
-                seekDraftInvalidated = false
-            }
-            // 曲目 / 连接已变化：手势失效，绝不提交旧草稿或回退位置。
-            guard !seekDraftInvalidated else {
+            seekDragIdentity = nil
+            seekDraftInvalidated = false
+            // 手势失效：绝不提交旧草稿或回退位置。
+            guard !invalidated else {
                 seekDraft = nil
                 return
+            }
+            // 释放时必须同时匹配捕获的连接世代与曲目，否则视为旧连接/旧曲目的手势。
+            if let gesture {
+                guard gesture.generation == generation, gesture.songId == songId else {
+                    seekDraft = nil
+                    return
+                }
             }
             commitSeek(seekDraft ?? Double(currentPositionMs))
         }
@@ -777,6 +889,123 @@ final class RemoteViewModel: ObservableObject {
         runControl { client in
             try await client.seek(positionMs: position)
         }
+    }
+
+    // MARK: - 局域网分享元数据（只读）
+
+    /// 手动刷新元数据（下拉刷新 / 诊断 / 测试）。会等待本次拉取完成。
+    func refreshMetadataNow() async {
+        await performMetadataFetch(force: true)
+    }
+
+    /// 触发一次元数据拉取（节流 + 互斥）；不阻塞调用方。
+    func refreshMetadata(force: Bool = false) {
+        guard isSceneActive, connection.isConnected, client != nil else { return }
+        if !force, let last = lastMetadataAttempt, dateProvider().timeIntervalSince(last) < metadataRetryInterval {
+            return
+        }
+        Task { @MainActor [weak self] in
+            await self?.performMetadataFetch(force: force)
+        }
+    }
+
+    /// 用户切换锁屏实时活动；权限不可用时优雅降级。
+    func setLiveActivityEnabled(_ enabled: Bool) {
+        settings.setLiveActivityEnabled(enabled)
+        liveActivity?.setUserEnabled(enabled)
+        if enabled {
+            notifyLiveActivity()
+        } else {
+            liveActivity?.end()
+        }
+    }
+
+    var liveActivityEnabled: Bool { settings.liveActivityEnabled }
+
+    private func scheduleMetadataCalibrationIfNeeded() {
+        guard metadataState == .unavailable else { return }
+        refreshMetadata(force: false)
+    }
+
+    /// 串行拉取队列 + 歌词；连接世代 + 请求世代 + 前台三重门控，迟到响应被丢弃。
+    private func performMetadataFetch(force: Bool) async {
+        guard isSceneActive, connection.isConnected, let client else { return }
+        if isMetadataFetchInFlight { return }
+        if !force, let last = lastMetadataAttempt, dateProvider().timeIntervalSince(last) < metadataRetryInterval {
+            return
+        }
+        isMetadataFetchInFlight = true
+        metadataGeneration += 1
+        let requestGen = metadataGeneration
+        let connectionGen = generation
+        if metadataState == .idle { metadataState = .loading }
+        defer { if requestGen == metadataGeneration { isMetadataFetchInFlight = false } }
+
+        func isCurrent() -> Bool {
+            requestGen == metadataGeneration && connectionGen == generation && isSceneActive
+        }
+
+        do {
+            let fetchedQueue = try await client.fetchLanShareQueue()
+            guard isCurrent() else { return }
+            lastMetadataAttempt = dateProvider()
+            if let fetchedQueue {
+                queue = fetchedQueue
+                metadataState = .available
+                metadataError = nil
+            } else {
+                metadataState = .unavailable
+            }
+            recomputeCurrentTrack()
+        } catch {
+            guard isCurrent() else { return }
+            lastMetadataAttempt = dateProvider()
+            // 403 / 网络失败：诚实进入不可用状态，**绝不**影响连接与控制能力。
+            metadataState = .unavailable
+            metadataError = message(for: error)
+        }
+
+        do {
+            let fetchedLyric = try await client.fetchLanShareLyric()
+            guard isCurrent() else { return }
+            lyric = fetchedLyric
+        } catch {
+            guard isCurrent() else { return }
+            lyric = nil
+        }
+        notifyLiveActivity()
+    }
+
+    /// 按外部 `songId` 重新匹配当前曲目（不依赖可能过期的 `playIndex`）。
+    private func recomputeCurrentTrack() {
+        let matched = queue?.matchingTrack(songId: songId)
+        if matched != currentTrack { currentTrack = matched }
+    }
+
+    private func resetMetadata() {
+        metadataGeneration += 1
+        isMetadataFetchInFlight = false
+        queue = nil
+        currentTrack = nil
+        lyric = nil
+        metadataState = .idle
+        metadataError = nil
+        lastMetadataAttempt = nil
+    }
+
+    /// 只要连接、进度、曲目或元数据发生变化就通知 Live Activity；去重 / 限频由 presenter 负责。
+    private func notifyLiveActivity() {
+        guard let liveActivity else { return }
+        let snapshot = RemoteActivitySnapshot(
+            title: currentTrack?.title ?? "SPlayer",
+            artist: currentTrack?.artistLine ?? "",
+            songId: songId.map { String($0) } ?? "",
+            isPlaying: playbackState == .playing,
+            isBuffering: isBuffering,
+            connectionAvailable: connection.isConnected && !isStale,
+            timestamp: dateProvider()
+        )
+        liveActivity.startOrUpdate(snapshot)
     }
 
     // MARK: - 进度锚点

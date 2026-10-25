@@ -52,6 +52,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+        # 局域网分享（只读元数据）：与上游一致无需 token，关闭分享时真实设备返回 403。
+        if path == "/api/lanShare/getQueue":
+            if getattr(self.server, "lan_share_disabled", False):
+                return self._send_json(403, {"error": "FORBIDDEN"})
+            return self._send_json(200, fixture("lan-share-queue.json"))
+        if path == "/api/lanShare/getLyric":
+            if getattr(self.server, "lan_share_disabled", False):
+                return self._send_json(403, {"error": "FORBIDDEN"})
+            return self._send_json(200, fixture("lan-share-lyric.json"))
         if not path.startswith("/api/external/"):
             return self._send_json(404, {"error": "endpoint not found"})
         if not self._authorized():
@@ -111,10 +120,12 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=6688)
     parser.add_argument("--token", default="devtoken")
+    parser.add_argument("--lan-share-disabled", action="store_true", help="模拟局域网分享关闭（lanShare 返回 403）")
     args = parser.parse_args()
 
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     httpd.expected_token = args.token
+    httpd.lan_share_disabled = args.lan_share_disabled
     print(f"Mock SPlayer 外部 API 运行于 http://{args.host}:{args.port}/api/external/ (token={args.token})")
     try:
         httpd.serve_forever()
