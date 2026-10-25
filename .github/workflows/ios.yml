@@ -1,6 +1,8 @@
 name: iOS build and tests
 on:
   workflow_dispatch:
+  push:
+    branches: [master]
 permissions:
   contents: read
 concurrency:

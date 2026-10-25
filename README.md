@@ -117,7 +117,7 @@ xcodebuild test \
 
 输出 `build/SPlayerRemote-unsigned.ipa`，内含为 iPhone 编译的 `.app` 和标准 `Payload/` 目录。**它尚未签名，不能直接安装到真机**；需要使用自己的有效签名与 provisioning profile，或在 Xcode 中配置 Team 后安装。
 
-也可在公开仓库的 Actions 页面手动运行 `iOS build and tests`：标准 macOS runner 执行模拟器测试与设备归档，产物只保留 3 天。工作流不需要 Apple ID 或签名凭证，不自动在 push 时触发。
+也可在公开仓库的 Actions 页面手动运行 `iOS build and tests`：标准 macOS runner 执行模拟器测试与设备归档，产物只保留 3 天。工作流不需要 Apple ID 或签名凭证，在主分支 push 或手动启动时触发，单次限制 30 分钟。
 
 ---
 
