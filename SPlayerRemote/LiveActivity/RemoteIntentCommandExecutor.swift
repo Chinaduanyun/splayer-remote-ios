@@ -6,38 +6,161 @@ import ActivityKit
 /// 交互式 Live Activity intent 的 **App 进程** 实现。
 ///
 /// 安全与稳健：
-/// - 只在此进程读取钥匙串 Token 与已保存的 host/port；扩展进程没有任何凭据路径；
-/// - 一次 intent 只发起**一次**有界 HTTP 命令（8s 超时），绝不自动重试 / 重放；
-/// - 无有效配置或设备锁定时，不发起请求，只把 Activity 标记为「连接不可用」，
-///   提示用户回到 App 内完成连接（返回错误语义的友好降级）；
-/// - 命令完成后尽力拉取一次最新状态来刷新 Activity，不承诺后台常驻连接。
+/// - 只使用 App 进程内存中的**已授权会话**（连接成功后登记），绝不回退到“已保存配置”；
+///   冷启动且没有有效会话时直接抛出友好错误，要求用户回到 App 内连接；
+/// - 派发前再次校验会话身份；断开 / 关闭实时活动 / 连接替换 / 致命鉴权失败会**同步**失效会话；
+/// - 一次 intent 只发起**一次**有界 HTTP 命令（客户端 8s 超时），成功后不再重试命令；
+/// - 命令完成后尽力拉取 status + now-playing（可选队列元数据）刷新 Activity；刷新失败不伪造新鲜度。
 enum RemoteIntentCommandExecutor {
 
-    static func perform(rawCommand: String) async {
-        guard let command = RemoteCommand(rawValue: rawCommand) else { return }
-        let acquired = await RemoteIntentGate.shared.acquire()
-        guard acquired else { return }
+    static func perform(rawCommand: String) async throws {
+        try await execute(
+            rawCommand: rawCommand,
+            sessionStore: .shared,
+            clientFactory: { url, token in RemoteAPIClient(baseURL: url, token: token) },
+            feedback: ActivityIntentFeedback()
+        )
+    }
 
-        guard let credentials = RemoteIntentCredentials.load() else {
-            await RemoteIntentFeedback.markConnectionUnavailable()
-            await RemoteIntentGate.shared.release()
-            return
+    /// 可测试入口：注入会话、客户端与反馈。
+    static func execute(
+        rawCommand: String,
+        sessionStore: RemoteIntentAuthorizedSessionStore,
+        clientFactory: (URL, String) -> RemoteAPI,
+        feedback: RemoteIntentFeedbackApplying
+    ) async throws {
+        guard let command = RemoteCommand(rawValue: rawCommand) else {
+            throw RemoteActivityCommandError.invalidCommand
+        }
+        let acquired = await RemoteIntentGate.shared.acquire()
+        guard acquired else {
+            throw RemoteActivityCommandError.deliveryFailed
         }
 
-        let client = RemoteAPIClient(baseURL: credentials.baseURL, token: credentials.token)
         do {
-            try await client.send(command: command)
-            if let status = try? await client.fetchStatus() {
-                await RemoteIntentFeedback.apply(status)
-            }
+            try await performLocked(
+                command: command,
+                sessionStore: sessionStore,
+                clientFactory: clientFactory,
+                feedback: feedback
+            )
         } catch {
-            await RemoteIntentFeedback.markConnectionUnavailable()
+            await RemoteIntentGate.shared.release()
+            throw error
         }
         await RemoteIntentGate.shared.release()
     }
+
+    private static func performLocked(
+        command: RemoteCommand,
+        sessionStore: RemoteIntentAuthorizedSessionStore,
+        clientFactory: (URL, String) -> RemoteAPI,
+        feedback: RemoteIntentFeedbackApplying
+    ) async throws {
+        guard let session = sessionStore.current() else {
+            throw RemoteActivityCommandError.noAuthorizedSession
+        }
+        let client = clientFactory(session.baseURL, session.token)
+
+        // 派发前立即校验会话身份：失效后绝不发送。
+        guard sessionStore.isCurrent(session.id) else {
+            throw RemoteActivityCommandError.noAuthorizedSession
+        }
+
+        do {
+            try await client.send(command: command)
+        } catch {
+            throw RemoteActivityCommandError.deliveryFailed
+        }
+
+        // 命令已被确认；只在会话仍有效时刷新展示，绝不重试命令。
+        guard sessionStore.isCurrent(session.id) else { return }
+
+        let status = try? await client.fetchStatus()
+        let nowPlaying = try? await client.fetchNowPlaying()
+        let queue = try? await client.fetchLanShareQueue()
+        let track = queue?.matchingTrack(songId: nowPlaying?.songId)
+        let authoritative = (status != nil || nowPlaying != nil)
+        await feedback.apply(
+            sessionId: session.id,
+            status: status,
+            nowPlaying: nowPlaying,
+            track: track,
+            authoritativeDate: authoritative ? Date() : nil
+        )
+    }
 }
 
-/// 串行去重：同一时刻只允许一个 intent 命令在途，避免连点造成的重复请求。
+/// 纯函数构建器：便于对“新曲目清除旧元数据 / 刷新失败不伪造新鲜度”做确定性测试。
+enum RemoteIntentFeedbackBuilder {
+    static func makeState(
+        existing: RemoteActivityAttributes.ContentState,
+        status: StatusResponse?,
+        nowPlaying: NowPlayingResponse?,
+        track: LanShareTrack?,
+        authoritativeDate: Date?
+    ) -> RemoteActivityAttributes.ContentState {
+        var state = existing
+
+        if let newSongId = nowPlaying.map({ String($0.songId) }) {
+            if newSongId != existing.songId {
+                // 曲目已切换：不要保留上一首的标题 / 艺人。
+                state.songId = RemoteActivityLimits.truncated(newSongId, limit: RemoteActivityLimits.songId)
+                state.title = RemoteActivityLimits.truncated(track?.title ?? "", limit: RemoteActivityLimits.title)
+                state.artist = RemoteActivityLimits.truncated(track?.artistLine ?? "", limit: RemoteActivityLimits.artist)
+            } else if let track {
+                state.title = RemoteActivityLimits.truncated(track.title ?? state.title, limit: RemoteActivityLimits.title)
+                state.artist = RemoteActivityLimits.truncated(track.artistLine ?? state.artist, limit: RemoteActivityLimits.artist)
+            }
+        }
+
+        if let status {
+            state.isPlaying = status.state == .playing
+            state.isBuffering = status.state == .buffering
+        } else if let nowPlaying {
+            state.isPlaying = nowPlaying.playing
+            state.isBuffering = nowPlaying.buffering
+        }
+
+        if let authoritativeDate {
+            state.lastUpdate = authoritativeDate
+            state.connectionAvailable = true
+        } else {
+            // 刷新失败：保留旧时间戳（可能已过期），并明确连接不可用。
+            state.connectionAvailable = false
+        }
+        return state
+    }
+}
+
+/// 生产反馈：更新所有现存 Activity；绝不新建 Activity。
+struct ActivityIntentFeedback: RemoteIntentFeedbackApplying {
+    func apply(
+        sessionId: UUID,
+        status: StatusResponse?,
+        nowPlaying: NowPlayingResponse?,
+        track: LanShareTrack?,
+        authoritativeDate: Date?
+    ) async {
+        for activity in Activity<RemoteActivityAttributes>.activities {
+            let state = RemoteIntentFeedbackBuilder.makeState(
+                existing: activity.contentState,
+                status: status,
+                nowPlaying: nowPlaying,
+                track: track,
+                authoritativeDate: authoritativeDate
+            )
+            let staleDate = state.lastUpdate.addingTimeInterval(RemoteActivityLimits.staleInterval)
+            await activity.update(ActivityContent(state: state, staleDate: staleDate))
+        }
+    }
+}
+
+#endif
+
+// MARK: - App 进程内的会话授权（不依赖 ActivityKit 类型）
+
+/// 串行去重：同一时刻只允许一个 intent 命令在途，避免连点造成重复请求。
 actor RemoteIntentGate {
     static let shared = RemoteIntentGate()
     private var busy = false
@@ -53,49 +176,61 @@ actor RemoteIntentGate {
     }
 }
 
-/// 从 App 已保存的配置读取凭据（UserDefaults 中的 host/port + 钥匙串 Token）。
+/// App 进程内“已授权 intent 会话”。
 ///
-/// 只在 App 进程可达；扩展进程无法访问（也不应访问）。
-struct RemoteIntentCredentials {
+/// 凭据只存在于内存，绝不进入 Activity 内容状态。App 进程被终止后（冷启动）此会话为空，
+/// 锁屏按钮会得到“请先打开 App 连接”的友好失败，而不会用保存的凭据发起远程命令。
+///
+/// 使用短临界区锁而非 MainActor：`invalidate()` 必须能在显式断开时**同步**完成。
+struct RemoteIntentAuthorizedSession: Sendable {
+    let id: UUID
     let baseURL: URL
     let token: String
+}
 
-    static func load() -> RemoteIntentCredentials? {
-        let defaults = UserDefaults.standard
-        guard let host = defaults.string(forKey: SettingsStore.Keys.host) else { return nil }
-        let port = defaults.integer(forKey: SettingsStore.Keys.port)
-        guard port > 0, port <= 65535 else { return nil }
-        guard let token = try? KeychainTokenStore().loadToken(),
-              !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        guard let url = try? HostValidator.buildBaseURL(host: host, port: port) else { return nil }
-        return RemoteIntentCredentials(baseURL: url, token: token)
+final class RemoteIntentAuthorizedSessionStore {
+    static let shared = RemoteIntentAuthorizedSessionStore()
+
+    private let lock = NSLock()
+    private var session: RemoteIntentAuthorizedSession?
+
+    /// 登记新会话（连接成功且用户已启用实时活动时调用）。
+    @discardableResult
+    func authorize(baseURL: URL, token: String) -> UUID {
+        let id = UUID()
+        lock.lock()
+        session = RemoteIntentAuthorizedSession(id: id, baseURL: baseURL, token: token)
+        lock.unlock()
+        return id
+    }
+
+    /// 同步失效：断开 / 关闭实时活动 / 连接替换 / 致命鉴权失败时立即调用。
+    func invalidate() {
+        lock.lock()
+        session = nil
+        lock.unlock()
+    }
+
+    func current() -> RemoteIntentAuthorizedSession? {
+        lock.lock()
+        defer { lock.unlock() }
+        return session
+    }
+
+    func isCurrent(_ id: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return session?.id == id
     }
 }
 
-/// 命令完成后刷新所有 Activity 的内容状态（仍然只含展示字段，绝无凭据）。
-enum RemoteIntentFeedback {
-
-    static func apply(_ status: StatusResponse) async {
-        for activity in Activity<RemoteActivityAttributes>.activities {
-            var state = activity.contentState
-            state.isPlaying = status.state == .playing
-            state.isBuffering = status.state == .buffering
-            state.connectionAvailable = true
-            state.lastUpdate = Date()
-            await activity.update(using: state)
-        }
-    }
-
-    static func markConnectionUnavailable() async {
-        for activity in Activity<RemoteActivityAttributes>.activities {
-            var state = activity.contentState
-            state.connectionAvailable = false
-            state.lastUpdate = Date()
-            await activity.update(using: state)
-        }
-    }
+/// 命令完成后的 Activity 反馈抽象（可注入以便确定性测试）。
+protocol RemoteIntentFeedbackApplying {
+    func apply(
+        sessionId: UUID,
+        status: StatusResponse?,
+        nowPlaying: NowPlayingResponse?,
+        track: LanShareTrack?,
+        authoritativeDate: Date?
+    ) async
 }
-
-#endif

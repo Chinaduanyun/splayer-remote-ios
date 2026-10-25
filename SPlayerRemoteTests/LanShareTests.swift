@@ -155,4 +155,43 @@ final class LanShareTests: XCTestCase {
     func testNotReadyLyricReturnsNil() throws {
         XCTAssertNil(try LanShareLyricDocument.decode(from: Data(#"{"ok":false}"#.utf8)))
     }
+
+    // MARK: - 聚合上限（F7）
+
+    func testManyArtistsAreBounded() throws {
+        let artists: [[String: Any]] = (0..<50).map { index in
+            ["id": String(index), "name": String(repeating: "x", count: 1_000)]
+        }
+        let payload: [String: Any] = [
+            "ok": true,
+            "revision": 1,
+            "data": ["tracks": [["id": "1", "title": "t", "artists": artists]]],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let track = try XCTUnwrap(try LanShareQueue.decode(from: data)?.tracks.first)
+
+        XCTAssertLessThanOrEqual(track.artists.count, LanShareLimits.maxArtists)
+        XCTAssertLessThanOrEqual(track.artistLine?.count ?? 0, LanShareLimits.maxArtistLine)
+    }
+
+    func testOversizedTranslationAndManyTimestampsAreCapped() throws {
+        var lrc = ""
+        for index in 0..<(LanShareLimits.maxLyricLines + 500) {
+            lrc += "[00:00.00]line \(index)\n"
+        }
+        let hugeTranslation = String(repeating: "translation ", count: 200_000)
+        let payload: [String: Any] = [
+            "ok": true,
+            "revision": 1,
+            "data": [
+                "source": ["source": "netease", "format": "lrc", "platform": "netease"],
+                "input": ["content": lrc, "translation": hugeTranslation],
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let lyric = try XCTUnwrap(LanShareLyricDocument.decode(from: data))
+
+        XCTAssertTrue(lyric.isSupported)
+        XCTAssertLessThanOrEqual(lyric.lines.count, LanShareLimits.maxLyricLines)
+    }
 }

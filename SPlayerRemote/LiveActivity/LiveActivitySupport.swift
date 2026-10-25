@@ -13,6 +13,19 @@ struct RemoteActivitySnapshot: Equatable, Sendable {
     var timestamp: Date
 }
 
+/// Live Activity 展示预算。ActivityKit 内容载荷很小，必须保守截断。
+enum RemoteActivityLimits {
+    static let title = 120
+    static let artist = 140
+    static let songId = 64
+    /// 超过该时长未刷新即由系统 / 视图标记为过期。
+    static let staleInterval: TimeInterval = 60
+
+    static func truncated(_ value: String, limit: Int) -> String {
+        String(value.prefix(limit))
+    }
+}
+
 /// Live Activity 呈现抽象：生产实现是 `LiveActivityController`，测试 / 无 ActivityKit 时用空实现。
 protocol LiveActivityPresenting: AnyObject {
     var areActivitiesEnabled: Bool { get }

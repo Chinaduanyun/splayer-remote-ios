@@ -115,10 +115,14 @@ final class RemoteViewModel: ObservableObject {
     private var scenePhase: ScenePhaseState = .active
     private var wasBackgrounded = false
     private var suppressAutoConnect = false
+    /// 致命鉴权失败（401/403）后锁定自动重连，直到显式 connect 或提交新配置。
+    private var authenticationFailureLatched = false
 
     /// 元数据请求世代 / 互斥，避免重叠或迟到的响应覆盖新曲目。
     private var metadataGeneration = 0
     private var isMetadataFetchInFlight = false
+    private var pendingMetadataRefresh = false
+    private var metadataTrackId: Int?
     private var lastMetadataAttempt: Date?
     private let metadataRetryInterval: TimeInterval
 
@@ -127,6 +131,8 @@ final class RemoteViewModel: ObservableObject {
 
     /// Live Activity 呈现（可空：测试与未启用时为空实现 / nil）。
     private let liveActivity: LiveActivityPresenting?
+    /// intent 授权会话存储（App 进程内存；冷启动为空）。
+    private let intentSessionStore: RemoteIntentAuthorizedSessionStore?
     /// 场景是否不处于后台（`.active` 与 `.inactive` 均视为前台）。
     private var isSceneActive: Bool { scenePhase != .background }
 
@@ -174,6 +180,7 @@ final class RemoteViewModel: ObservableObject {
         reconnectDelays: [UInt64] = [1_000_000_000, 2_000_000_000, 4_000_000_000, 8_000_000_000],
         metadataRetryInterval: TimeInterval = 15,
         liveActivity: LiveActivityPresenting? = nil,
+        intentSessionStore: RemoteIntentAuthorizedSessionStore? = nil,
         monotonicNow: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         dateProvider: @escaping () -> Date = { Date() }
     ) {
@@ -185,6 +192,7 @@ final class RemoteViewModel: ObservableObject {
         self.reconnectDelays = reconnectDelays.isEmpty ? [1_000_000_000] : reconnectDelays
         self.metadataRetryInterval = metadataRetryInterval
         self.liveActivity = liveActivity
+        self.intentSessionStore = intentSessionStore
         self.monotonicNow = monotonicNow
         self.dateProvider = dateProvider
     }
@@ -241,7 +249,10 @@ final class RemoteViewModel: ObservableObject {
 
     func connect() async {
         suppressAutoConnect = false
+        authenticationFailureLatched = false
         disconnect(resetState: false)
+        // 新建连接即替换旧会话：结束旧 Activity，避免其内容 / 按钮指向旧连接。
+        liveActivity?.end()
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             await self.performConnection()
@@ -255,6 +266,7 @@ final class RemoteViewModel: ObservableObject {
     func connectIfConfigured() async {
         guard settings.autoConnect,
               !suppressAutoConnect,
+              !authenticationFailureLatched,
               settings.hasSavedConnection else { return }
         guard connection != .connected, connection != .connecting else { return }
         await connect()
@@ -323,6 +335,8 @@ final class RemoteViewModel: ObservableObject {
             updateProgressAnchor(authoritativePosition: rawPositionMs)
             startPolling()
             startSocketIfNeeded()
+            authorizeIntentSession()
+            liveActivity?.setUserEnabled(settings.liveActivityEnabled)
             recomputeCurrentTrack()
             refreshMetadata(force: true)
             notifyLiveActivity()
@@ -331,6 +345,9 @@ final class RemoteViewModel: ObservableObject {
             client = nil
             connection = .failed(message(for: error))
             lastError = message(for: error)
+            invalidateIntentSession()
+            if isAuthenticationFailure(error) { authenticationFailureLatched = true }
+            liveActivity?.end()
         }
     }
 
@@ -341,6 +358,7 @@ final class RemoteViewModel: ObservableObject {
         connection = .disconnected
         isStale = false
         lastError = nil
+        invalidateIntentSession()
     }
 
     func disconnect(resetState: Bool = true) {
@@ -356,6 +374,7 @@ final class RemoteViewModel: ObservableObject {
         stopPolling()
         teardownSocket()
         invalidateCommand()
+        invalidateIntentSession()
         client = nil
         activeConfiguration = nil
         reconnectAttempt = 0
@@ -383,6 +402,7 @@ final class RemoteViewModel: ObservableObject {
             progressAnchor = nil
             trackedSongId = nil
             resetMetadata()
+            liveActivity?.end()
         }
     }
 
@@ -449,6 +469,9 @@ final class RemoteViewModel: ObservableObject {
         updateProgressAnchor()
         startPolling()
         startSocketIfNeeded()
+        ensureIntentSessionAuthorized()
+        // 后台中断的元数据请求在回前台后恢复（不依赖下一次 track 变化）。
+        refreshMetadata(force: true)
         // 立即刷新一次 HTTP（不先睡眠 2/5 秒）；世代 / 前台门控保证安全。
         let gen = generation
         foregroundRefreshTask?.cancel()
@@ -531,15 +554,15 @@ final class RemoteViewModel: ObservableObject {
             if let clients { wsClientCount = clients }
         case .stateChanged(let payload):
             // 仅「完整且合法」的快照才能恢复播放新鲜度；partial / 非法时间不得清除过期。
-            if payload.isFreshPlaybackSnapshot { isStale = false }
+            if payload.isFreshPlaybackSnapshot {
+                isStale = false
+                lastSuccessfulUpdate = dateProvider()
+                lastError = nil
+            }
             applyStateChanged(payload)
             // 排序屏障独立于新鲜度：任何已合并的共享字段 partial 都必须阻止旧轮询覆盖。
             if payload.mutatesSharedState {
                 wsArrivalCount += 1
-            }
-            if payload.isFreshPlaybackSnapshot {
-                lastSuccessfulUpdate = dateProvider()
-                lastError = nil
             }
         case .ended:
             // 终态：冻结进度并参与快照排序；不得恢复过期/REST 健康。
@@ -559,8 +582,7 @@ final class RemoteViewModel: ObservableObject {
             nowPlaying?.songId = songId
             if songId != previousSongId {
                 invalidateSeekDragIfNeeded(newSongId: songId)
-                recomputeCurrentTrack()
-                refreshMetadata(force: true)
+                handleMetadataTrackChange()
             }
         }
 
@@ -622,6 +644,7 @@ final class RemoteViewModel: ObservableObject {
         status?.state = .paused
         status?.isFinished = true
         updateProgressAnchor()
+        notifyLiveActivity()
     }
 
     private func scheduleReconnect(generation gen: Int) {
@@ -691,8 +714,7 @@ final class RemoteViewModel: ObservableObject {
             trackedSongId = freshNow.songId
             if freshNow.songId != previousSongId {
                 invalidateSeekDragIfNeeded(newSongId: freshNow.songId)
-                recomputeCurrentTrack()
-                refreshMetadata(force: true)
+                handleMetadataTrackChange()
             }
             if !isAdjustingVolume { volumeDraft = nil }
             if !isAdjustingSeek { seekDraft = nil }
@@ -714,6 +736,8 @@ final class RemoteViewModel: ObservableObject {
                 stopPolling()
                 teardownSocket()
                 invalidateCommand()
+                invalidateIntentSession()
+                if isAuthenticationFailure(error) { authenticationFailureLatched = true }
                 isStale = true
                 isRestDegraded = true
                 connection = .failed(message(for: error))
@@ -725,6 +749,7 @@ final class RemoteViewModel: ObservableObject {
                 isRestDegraded = true
                 lastError = message(for: error)
                 updateProgressAnchor()
+                notifyLiveActivity()
             }
         }
     }
@@ -733,6 +758,17 @@ final class RemoteViewModel: ObservableObject {
         guard let apiError = error as? RemoteAPIError else { return false }
         switch apiError {
         case .unauthorized, .forbidden, .invalidConfiguration:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// 仅鉴权失败（401/403）触发自动重连锁存；配置错误不冒充鉴权失败。
+    private func isAuthenticationFailure(_ error: Error) -> Bool {
+        guard let apiError = error as? RemoteAPIError else { return false }
+        switch apiError {
+        case .unauthorized, .forbidden:
             return true
         default:
             return false
@@ -895,12 +931,23 @@ final class RemoteViewModel: ObservableObject {
 
     /// 手动刷新元数据（下拉刷新 / 诊断 / 测试）。会等待本次拉取完成。
     func refreshMetadataNow() async {
+        if isMetadataFetchInFlight {
+            pendingMetadataRefresh = true
+            return
+        }
         await performMetadataFetch(force: true)
     }
 
-    /// 触发一次元数据拉取（节流 + 互斥）；不阻塞调用方。
+    /// 触发一次元数据拉取（节流 + 互斥 + 合并）；不阻塞调用方。
     func refreshMetadata(force: Bool = false) {
         guard isSceneActive, connection.isConnected, client != nil else { return }
+        if isMetadataFetchInFlight {
+            // 合并：强制刷新或曲目已变化时，等当前请求结束再补一次，避免重叠。
+            if force || metadataTrackId != songId {
+                pendingMetadataRefresh = true
+            }
+            return
+        }
         if !force, let last = lastMetadataAttempt, dateProvider().timeIntervalSince(last) < metadataRetryInterval {
             return
         }
@@ -914,20 +961,59 @@ final class RemoteViewModel: ObservableObject {
         settings.setLiveActivityEnabled(enabled)
         liveActivity?.setUserEnabled(enabled)
         if enabled {
+            authorizeIntentSession()
             notifyLiveActivity()
         } else {
+            invalidateIntentSession()
             liveActivity?.end()
         }
     }
 
     var liveActivityEnabled: Bool { settings.liveActivityEnabled }
 
+    /// 连接成功后登记 intent 授权会话（仅当已连接 + 用户开启实时活动）。
+    private func authorizeIntentSession() {
+        guard let intentSessionStore else { return }
+        guard connection.isConnected,
+              let configuration = activeConfiguration,
+              settings.liveActivityEnabled else {
+            intentSessionStore.invalidate()
+            return
+        }
+        intentSessionStore.authorize(baseURL: configuration.baseURL, token: configuration.token)
+    }
+
+    /// 前台恢复：会话仍存在则保持不变；不存在且条件满足时重新登记。
+    private func ensureIntentSessionAuthorized() {
+        guard let intentSessionStore else { return }
+        guard connection.isConnected,
+              let configuration = activeConfiguration,
+              settings.liveActivityEnabled else {
+            intentSessionStore.invalidate()
+            return
+        }
+        if intentSessionStore.current() == nil {
+            intentSessionStore.authorize(baseURL: configuration.baseURL, token: configuration.token)
+        }
+    }
+
+    private func invalidateIntentSession() {
+        intentSessionStore?.invalidate()
+    }
+
+    /// 曲目变化：立即作废上一首歌词，按需排队 / 触发一次新元数据拉取。
+    private func handleMetadataTrackChange() {
+        lyric = nil
+        recomputeCurrentTrack()
+        refreshMetadata(force: true)
+    }
+
     private func scheduleMetadataCalibrationIfNeeded() {
-        guard metadataState == .unavailable else { return }
+        // 已可用也做低频校准；节流与在途合并由 refreshMetadata 负责。
         refreshMetadata(force: false)
     }
 
-    /// 串行拉取队列 + 歌词；连接世代 + 请求世代 + 前台三重门控，迟到响应被丢弃。
+    /// 串行拉取队列 + 歌词；连接世代 + 请求世代 + 前台 + 曲目身份门控。
     private func performMetadataFetch(force: Bool) async {
         guard isSceneActive, connection.isConnected, let client else { return }
         if isMetadataFetchInFlight { return }
@@ -938,8 +1024,20 @@ final class RemoteViewModel: ObservableObject {
         metadataGeneration += 1
         let requestGen = metadataGeneration
         let connectionGen = generation
+        let requestTrackId = songId
+        metadataTrackId = requestTrackId
         if metadataState == .idle { metadataState = .loading }
-        defer { if requestGen == metadataGeneration { isMetadataFetchInFlight = false } }
+        defer {
+            if requestGen == metadataGeneration {
+                isMetadataFetchInFlight = false
+                if pendingMetadataRefresh {
+                    pendingMetadataRefresh = false
+                    Task { @MainActor [weak self] in
+                        await self?.performMetadataFetch(force: true)
+                    }
+                }
+            }
+        }
 
         func isCurrent() -> Bool {
             requestGen == metadataGeneration && connectionGen == generation && isSceneActive
@@ -953,27 +1051,36 @@ final class RemoteViewModel: ObservableObject {
                 queue = fetchedQueue
                 metadataState = .available
                 metadataError = nil
+                recomputeCurrentTrack()
             } else {
+                // ok:false：诚实进入不可用，不保留过期展示。
+                clearMetadataPresentation()
                 metadataState = .unavailable
             }
-            recomputeCurrentTrack()
         } catch {
             guard isCurrent() else { return }
             lastMetadataAttempt = dateProvider()
-            // 403 / 网络失败：诚实进入不可用状态，**绝不**影响连接与控制能力。
+            clearMetadataPresentation()
             metadataState = .unavailable
             metadataError = message(for: error)
         }
 
+        // 歌词是曲目专属：仅在曲目身份未变时安装。
         do {
             let fetchedLyric = try await client.fetchLanShareLyric()
-            guard isCurrent() else { return }
+            guard isCurrent(), requestTrackId == songId else { return }
             lyric = fetchedLyric
         } catch {
-            guard isCurrent() else { return }
+            guard isCurrent(), requestTrackId == songId else { return }
             lyric = nil
         }
         notifyLiveActivity()
+    }
+
+    private func clearMetadataPresentation() {
+        queue = nil
+        currentTrack = nil
+        lyric = nil
     }
 
     /// 按外部 `songId` 重新匹配当前曲目（不依赖可能过期的 `playIndex`）。
@@ -985,6 +1092,8 @@ final class RemoteViewModel: ObservableObject {
     private func resetMetadata() {
         metadataGeneration += 1
         isMetadataFetchInFlight = false
+        pendingMetadataRefresh = false
+        metadataTrackId = nil
         queue = nil
         currentTrack = nil
         lyric = nil
@@ -993,17 +1102,18 @@ final class RemoteViewModel: ObservableObject {
         lastMetadataAttempt = nil
     }
 
-    /// 只要连接、进度、曲目或元数据发生变化就通知 Live Activity；去重 / 限频由 presenter 负责。
+    /// 通知 Live Activity；去重 / 限频由 presenter 负责。
     private func notifyLiveActivity() {
         guard let liveActivity else { return }
         let snapshot = RemoteActivitySnapshot(
-            title: currentTrack?.title ?? "SPlayer",
-            artist: currentTrack?.artistLine ?? "",
-            songId: songId.map { String($0) } ?? "",
+            title: RemoteActivityLimits.truncated(currentTrack?.title ?? "SPlayer", limit: RemoteActivityLimits.title),
+            artist: RemoteActivityLimits.truncated(currentTrack?.artistLine ?? "", limit: RemoteActivityLimits.artist),
+            songId: RemoteActivityLimits.truncated(songId.map { String($0) } ?? "", limit: RemoteActivityLimits.songId),
             isPlaying: playbackState == .playing,
             isBuffering: isBuffering,
             connectionAvailable: connection.isConnected && !isStale,
-            timestamp: dateProvider()
+            // 只使用最近一次权威播放成功时间；绝不因通知 / 失败尝试伪造新鲜度。
+            timestamp: lastSuccessfulUpdate ?? Date.distantPast
         )
         liveActivity.startOrUpdate(snapshot)
     }

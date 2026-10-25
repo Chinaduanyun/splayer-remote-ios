@@ -16,6 +16,8 @@ enum RemoteAPIError: Error, Equatable, LocalizedError {
     case httpStatus(Int)
     /// JSON 解析失败。
     case decoding
+    /// 响应体超过允许的字节上限。
+    case responseTooLarge
     /// 网络层错误（超时、连接被拒绝等）。
     case transport(String)
     /// 请求被取消。
@@ -37,6 +39,8 @@ enum RemoteAPIError: Error, Equatable, LocalizedError {
             return "服务器返回异常状态码：\(code)。"
         case .decoding:
             return "响应格式无法解析：可能不是 SPlayer 外部 API 服务。"
+        case .responseTooLarge:
+            return "服务器响应过大，已停止读取。"
         case .transport(let detail):
             return "网络请求失败：\(detail)"
         case .cancelled:

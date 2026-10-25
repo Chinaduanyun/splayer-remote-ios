@@ -80,6 +80,8 @@ TEST_SOURCES = [
     "SPlayerRemoteTests/CoverImageLoaderTests.swift",
     "SPlayerRemoteTests/V12ViewModelTests.swift",
     "SPlayerRemoteTests/LiveActivityModelTests.swift",
+    "SPlayerRemoteTests/LiveActivityControllerTests.swift",
+    "SPlayerRemoteTests/IntentExecutionTests.swift",
 ]
 
 INFO_PLIST = "SPlayerRemote/Info.plist"

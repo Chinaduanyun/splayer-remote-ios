@@ -11,7 +11,8 @@ struct SPlayerRemoteApp: App {
         _remote = StateObject(wrappedValue: RemoteViewModel(
             settings: settings,
             socketFactory: URLSessionWebSocketTransport.makeFactory(),
-            liveActivity: SPlayerRemoteApp.makeLiveActivityPresenter(settings: settings)
+            liveActivity: SPlayerRemoteApp.makeLiveActivityPresenter(settings: settings),
+            intentSessionStore: .shared
         ))
     }
 

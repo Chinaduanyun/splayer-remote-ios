@@ -89,7 +89,7 @@ final class RemoteAPIClient: RemoteAPI {
         guard let request = APIRequestFactory.lanShareRequest(baseURL: baseURL, endpoint: "getQueue", token: token) else {
             throw RemoteAPIError.invalidConfiguration("无法构造局域网分享请求。")
         }
-        let data = try await perform(request)
+        let data = try await performBounded(request, maxBytes: LanShareLimits.maxQueueResponseBytes)
         return try LanShareQueue.decode(from: data)
     }
 
@@ -97,11 +97,64 @@ final class RemoteAPIClient: RemoteAPI {
         guard let request = APIRequestFactory.lanShareRequest(baseURL: baseURL, endpoint: "getLyric", token: token) else {
             throw RemoteAPIError.invalidConfiguration("无法构造局域网分享请求。")
         }
-        let data = try await perform(request)
+        let data = try await performBounded(request, maxBytes: LanShareLimits.maxLyricResponseBytes)
         return try LanShareLyricDocument.decode(from: data)
     }
 
     // MARK: - 内部
+
+    /// 流式读取（无新依赖），超过字节上限立即停止，避免异常 LAN 负载耗尽内存。
+    private func performBounded(_ request: URLRequest, maxBytes: Int) async throws -> Data {
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await session.bytes(for: request)
+        } catch is CancellationError {
+            throw RemoteAPIError.cancelled
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw RemoteAPIError.cancelled
+        } catch {
+            throw RemoteAPIError.transport(error.localizedDescription)
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw RemoteAPIError.transport("非 HTTP 响应。")
+        }
+        switch http.statusCode {
+        case 200..<300:
+            break
+        case 401:
+            throw RemoteAPIError.unauthorized
+        case 403:
+            throw RemoteAPIError.forbidden
+        default:
+            throw RemoteAPIError.httpStatus(http.statusCode)
+        }
+
+        if http.expectedContentLength > Int64(maxBytes) {
+            throw RemoteAPIError.responseTooLarge
+        }
+
+        var data = Data()
+        data.reserveCapacity(min(maxBytes, 256 * 1024))
+        do {
+            for try await byte in bytes {
+                if data.count >= maxBytes {
+                    throw RemoteAPIError.responseTooLarge
+                }
+                data.append(byte)
+            }
+        } catch let error as RemoteAPIError {
+            throw error
+        } catch is CancellationError {
+            throw RemoteAPIError.cancelled
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw RemoteAPIError.cancelled
+        } catch {
+            throw RemoteAPIError.transport(error.localizedDescription)
+        }
+        return data
+    }
 
     private func perform(_ request: URLRequest) async throws -> Data {
         let data: Data

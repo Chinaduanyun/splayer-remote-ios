@@ -11,7 +11,7 @@ struct RemotePlaybackLiveActivity: Widget {
 
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: RemoteActivityAttributes.self) { context in
-            LockScreenCard(state: context.state)
+            LockScreenCard(state: context.state, isStale: context.isStale)
                 .activityBackgroundTint(Color.black.opacity(0.55))
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
@@ -35,7 +35,7 @@ struct RemotePlaybackLiveActivity: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    StatusGlyph(state: context.state)
+                    StatusGlyph(state: context.state, isStale: context.isStale)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     ControlRow(state: context.state)
@@ -54,6 +54,7 @@ struct RemotePlaybackLiveActivity: Widget {
 
 private struct LockScreenCard: View {
     let state: RemoteActivityAttributes.ContentState
+    let isStale: Bool
 
     var body: some View {
         VStack(spacing: 10) {
@@ -74,7 +75,7 @@ private struct LockScreenCard: View {
                     }
                 }
                 Spacer(minLength: 0)
-                StatusGlyph(state: state)
+                StatusGlyph(state: state, isStale: isStale)
             }
             ControlRow(state: state)
         }
@@ -86,10 +87,15 @@ private struct LockScreenCard: View {
 
 private struct StatusGlyph: View {
     let state: RemoteActivityAttributes.ContentState
+    let isStale: Bool
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 2) {
-            if !state.connectionAvailable {
+            if isStale {
+                Label("可能已过期", systemImage: "clock.badge.exclamationmark")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if !state.connectionAvailable {
                 Label("连接不可用", systemImage: "wifi.slash")
                     .font(.caption2)
                     .foregroundStyle(.secondary)

@@ -28,6 +28,7 @@ final class V12ViewModelTests: XCTestCase {
         socketFactory: RemoteSocketFactory? = nil,
         useWebSocket: Bool = false,
         liveActivity: LiveActivityPresenting? = nil,
+        intentSessionStore: RemoteIntentAuthorizedSessionStore? = nil,
         clock: TestMonotonicClock = TestMonotonicClock()
     ) -> RemoteViewModel {
         RemoteViewModel(
@@ -39,8 +40,28 @@ final class V12ViewModelTests: XCTestCase {
             reconnectDelays: [50_000_000],
             metadataRetryInterval: 15,
             liveActivity: liveActivity,
+            intentSessionStore: intentSessionStore,
             monotonicNow: { clock.now },
             dateProvider: { Date(timeIntervalSince1970: 1_700_000_000) }
+        )
+    }
+
+    private func makeQueue(ids: [Int]) -> LanShareQueue {
+        let tracks = ids.map { LanShareFixtures.track(id: String($0), title: "Track \($0)") }
+        let payload: [String: Any] = [
+            "ok": true,
+            "revision": 5,
+            "data": ["playIndex": 0, "tracks": tracks],
+        ]
+        return try! LanShareQueue.decode(from: JSONSerialization.data(withJSONObject: payload))!
+    }
+
+    private func makeLyric(_ text: String) -> LanShareLyricDocument {
+        LanShareLyricDocument(
+            revision: 1,
+            source: LanShareLyricSource(source: "netease", format: "lrc", platform: "netease"),
+            lines: [LanShareLyricLine(id: 0, timeMs: 1_000, text: text, translation: nil)],
+            isSupported: true
         )
     }
 
@@ -245,6 +266,288 @@ final class V12ViewModelTests: XCTestCase {
         await vm.connect()
         vm.disconnectByUser()
         XCTAssertGreaterThanOrEqual(spy.endCount, 1)
+    }
+
+    // MARK: - Intent 授权会话（F2）
+
+    func testIntentSessionAuthorizedOnlyWhenConnectedAndActivityEnabled() async {
+        let api = MockRemoteAPI()
+        let store = RemoteIntentAuthorizedSessionStore()
+        let settings = makeSettings()
+        settings.setLiveActivityEnabled(true)
+        let vm = makeViewModel(api: api, settings: settings, intentSessionStore: store)
+        await vm.connect()
+        defer { vm.disconnect() }
+        XCTAssertNotNil(store.current(), "已连接 + 已启用实时活动时应登记意图会话")
+    }
+
+    func testIntentSessionNotAuthorizedWhenActivityDisabled() async {
+        let api = MockRemoteAPI()
+        let store = RemoteIntentAuthorizedSessionStore()
+        let vm = makeViewModel(api: api, intentSessionStore: store)
+        await vm.connect()
+        defer { vm.disconnect() }
+        XCTAssertNil(store.current(), "未启用实时活动时不得登记意图会话")
+    }
+
+    func testIntentSessionInvalidatedOnUserDisconnect() async {
+        let api = MockRemoteAPI()
+        let store = RemoteIntentAuthorizedSessionStore()
+        let settings = makeSettings()
+        settings.setLiveActivityEnabled(true)
+        let vm = makeViewModel(api: api, settings: settings, intentSessionStore: store)
+        await vm.connect()
+        XCTAssertNotNil(store.current())
+        vm.disconnectByUser()
+        XCTAssertNil(store.current(), "显式断开必须同步失效意图会话")
+    }
+
+    func testIntentSessionInvalidatedOnDisable() async {
+        let api = MockRemoteAPI()
+        let store = RemoteIntentAuthorizedSessionStore()
+        let settings = makeSettings()
+        settings.setLiveActivityEnabled(true)
+        let vm = makeViewModel(api: api, settings: settings, intentSessionStore: store)
+        await vm.connect()
+        defer { vm.disconnect() }
+        XCTAssertNotNil(store.current())
+        vm.setLiveActivityEnabled(false)
+        XCTAssertNil(store.current(), "关闭实时活动必须同步失效意图会话")
+    }
+
+    func testIntentSessionInvalidatedOnFatalAuthenticationFailure() async {
+        let api = MockRemoteAPI()
+        let store = RemoteIntentAuthorizedSessionStore()
+        let settings = makeSettings()
+        settings.setLiveActivityEnabled(true)
+        let vm = makeViewModel(api: api, settings: settings, intentSessionStore: store)
+        await vm.connect()
+        XCTAssertNotNil(store.current())
+
+        api.statusResult = .failure(RemoteAPIError.unauthorized)
+        api.nowPlayingResult = .failure(RemoteAPIError.unauthorized)
+        await vm.refreshNow()
+        XCTAssertNil(store.current(), "致命鉴权失败必须失效意图会话")
+    }
+
+    func testIntentSessionInvalidatedOnReplacementWithFailedAuth() async {
+        let api = MockRemoteAPI()
+        let store = RemoteIntentAuthorizedSessionStore()
+        let settings = makeSettings()
+        settings.setLiveActivityEnabled(true)
+        let vm = makeViewModel(api: api, settings: settings, intentSessionStore: store)
+        await vm.connect()
+        XCTAssertNotNil(store.current())
+
+        // 替换到 B，但 B 鉴权失败：旧 A 的会话必须先失效。
+        settings.host = "10.0.0.9"
+        api.infoResult = .failure(RemoteAPIError.unauthorized)
+        await vm.connect()
+        XCTAssertNil(store.current())
+
+        #if canImport(ActivityKit)
+        let before = api.sentCommands.count
+        let feedback = RecordingIntentFeedback()
+        do {
+            try await RemoteIntentCommandExecutor.execute(
+                rawCommand: "next",
+                sessionStore: store,
+                clientFactory: { _, _ in api },
+                feedback: feedback
+            )
+            XCTFail("无授权会话时不应成功")
+        } catch {
+            // expected
+        }
+        XCTAssertEqual(api.sentCommands.count, before, "无授权会话时不得发送任何命令")
+        XCTAssertTrue(feedback.applied.isEmpty)
+        #endif
+    }
+
+    // MARK: - 元数据曲目门控 / 合幷（F3）
+
+    func testLyricFromPreviousTrackIsDiscardedAndRefreshQueued() async {
+        let api = MockRemoteAPI()
+        let factory = MockSocketFactory()
+        api.lanShareQueueResult = .success(makeQueue(ids: [42, 8]))
+        api.lanShareLyricResults = [.success(makeLyric("A line")), .success(makeLyric("B line"))]
+        let gate = AsyncGate()
+        api.lanShareLyricDelay = { await gate.wait() }
+
+        let vm = makeViewModel(api: api, socketFactory: factory.make(), useWebSocket: true)
+        await vm.connect()
+        defer { vm.disconnect() }
+        await waitUntil { vm.transport == .live }
+        await waitUntil { api.lanShareQueueCallCount >= 1 && api.lanShareLyricCallCount >= 1 }
+
+        // A 的歌词请求仍挂起时切到 B。
+        factory.latest?.emit(.stateChanged(StateChangedPayload(songId: 8, playing: true, positionMs: 0)))
+        await waitUntil { vm.songId == 8 }
+        XCTAssertNil(vm.lyric, "曲目切换应立即清空旧歌词")
+
+        await gate.open()
+        await waitUntil { vm.lyric?.lines.first?.text == "B line" }
+        XCTAssertEqual(vm.currentTrack?.id, "8")
+        XCTAssertEqual(vm.lyric?.lines.first?.text, "B line", "迟到的 A 歌词不得覆盖 B")
+    }
+
+    func testSuccessfulMetadataBecomesUnavailableAndClearsStalePresentation() async {
+        let api = MockRemoteAPI()
+        api.lanShareQueueResult = .success(makeQueue(songId: 42, title: "Current"))
+        api.lanShareLyricResult = .success(makeLyric("A line"))
+        let vm = makeViewModel(api: api)
+        await vm.connect()
+        defer { vm.disconnect() }
+
+        await waitUntil { vm.metadataState == .available && vm.currentTrack != nil }
+        XCTAssertNotNil(vm.queue)
+
+        api.lanShareQueueResult = .failure(RemoteAPIError.forbidden)
+        api.lanShareLyricResult = .failure(RemoteAPIError.forbidden)
+        vm.refreshMetadata(force: true)
+        await waitUntil { vm.metadataState == .unavailable }
+
+        XCTAssertNil(vm.queue, "失败后不得保留过期队列冒充当前")
+        XCTAssertNil(vm.currentTrack)
+        XCTAssertNil(vm.lyric)
+        XCTAssertEqual(vm.metadataState, .unavailable)
+        XCTAssertNotNil(vm.metadataError)
+        XCTAssertTrue(vm.canControl)
+    }
+
+    func testMetadataRecoversAfterBackgroundInterruption() async {
+        let api = MockRemoteAPI()
+        api.lanShareQueueResult = .success(makeQueue(songId: 42, title: "Current"))
+        api.lanShareLyricResult = .success(makeLyric("A line"))
+        let gate = AsyncGate()
+        api.lanShareQueueDelay = { await gate.wait() }
+
+        let vm = makeViewModel(api: api)
+        await vm.connect()
+        defer { vm.disconnect() }
+        await waitUntil { api.lanShareQueueCallCount >= 1 }
+
+        vm.setSceneActive(false)
+        vm.setSceneActive(true)
+        await gate.open()
+
+        await waitUntil { vm.metadataState == .available && vm.currentTrack?.title == "Current" }
+    }
+
+    func testMultipleTrackChangesDuringFetchCoalesceToOneQueuedRefresh() async {
+        let api = MockRemoteAPI()
+        let factory = MockSocketFactory()
+        api.lanShareQueueResult = .success(makeQueue(ids: [42, 8, 9]))
+        api.lanShareLyricResults = [.success(makeLyric("A line")), .success(makeLyric("B line"))]
+        let gate = AsyncGate()
+        api.lanShareLyricDelay = { await gate.wait() }
+
+        let vm = makeViewModel(api: api, socketFactory: factory.make(), useWebSocket: true)
+        await vm.connect()
+        defer { vm.disconnect() }
+        await waitUntil { vm.transport == .live }
+        await waitUntil { api.lanShareLyricCallCount >= 1 }
+
+        factory.latest?.emit(.stateChanged(StateChangedPayload(songId: 8, playing: true, positionMs: 0)))
+        await waitUntil { vm.songId == 8 }
+        factory.latest?.emit(.stateChanged(StateChangedPayload(songId: 9, playing: true, positionMs: 0)))
+        await waitUntil { vm.songId == 9 }
+
+        await gate.open()
+        await waitUntil { vm.lyric?.lines.first?.text == "B line" }
+        XCTAssertEqual(vm.currentTrack?.id, "9")
+        XCTAssertEqual(api.lanShareLyricCallCount, 2, "多次曲目变化应合并为一次后续刷新")
+    }
+
+    func testMetadataNotReadyClearsPresentationAndMarksUnavailable() async {
+        let api = MockRemoteAPI()
+        api.lanShareQueueResult = .success(makeQueue(songId: 42, title: "Current"))
+        api.lanShareLyricResult = .success(makeLyric("A line"))
+        let vm = makeViewModel(api: api)
+        await vm.connect()
+        defer { vm.disconnect() }
+
+        await waitUntil { vm.metadataState == .available && vm.currentTrack != nil }
+
+        api.lanShareQueueResult = .success(nil)
+        api.lanShareLyricResult = .success(nil)
+        vm.refreshMetadata(force: true)
+        await waitUntil { vm.metadataState == .unavailable }
+
+        XCTAssertNil(vm.queue, "ok:false 时不得保留过期队列")
+        XCTAssertNil(vm.currentTrack)
+        XCTAssertEqual(vm.metadataState, .unavailable)
+    }
+
+    func testEndedNotifiesActivityAsNotPlayingWithoutNewTimestamp() async {
+        let api = MockRemoteAPI()
+        let factory = MockSocketFactory()
+        let spy = SpyLiveActivityPresenter()
+        let vm = makeViewModel(api: api, socketFactory: factory.make(), useWebSocket: true, liveActivity: spy)
+        await vm.connect()
+        defer { vm.disconnect() }
+        await waitUntil { vm.transport == .live }
+
+        factory.latest?.emit(.ended)
+        await waitUntil { spy.snapshots.last?.isPlaying == false }
+        XCTAssertEqual(spy.snapshots.last?.timestamp, Date(timeIntervalSince1970: 1_700_000_000))
+    }
+
+    // MARK: - 致命鉴权失败锁存（F8）
+
+    func testAuthenticationFailureLatchesAutomaticReconnectUntilExplicitConnect() async {
+        let api = MockRemoteAPI()
+        let settings = makeSettings()
+        settings.autoConnect = true
+        api.infoResult = .failure(RemoteAPIError.unauthorized)
+        let vm = makeViewModel(api: api, settings: settings)
+
+        await vm.connectIfConfigured()
+        XCTAssertFalse(vm.connection.isConnected)
+        let attemptsAfterFailure = api.infoCallCount
+
+        // 后台 / 回前台不得自动重试刚失败的鉴权。
+        vm.setSceneActive(false)
+        vm.setSceneActive(true)
+        await vm.connectIfConfigured()
+        XCTAssertEqual(api.infoCallCount, attemptsAfterFailure, "鉴权失败后不得自动重试")
+
+        // 显式连接清除锁存。
+        api.infoResult = .success(InfoResponse(name: "SPlayer Next", version: "9.9.9", wsClients: 1))
+        await vm.connect()
+        XCTAssertTrue(vm.connection.isConnected)
+        vm.disconnect()
+
+        let beforeAuto = api.infoCallCount
+        await vm.connectIfConfigured()
+        XCTAssertGreaterThan(api.infoCallCount, beforeAuto, "显式连接成功后应恢复自动重连能力")
+        vm.disconnect()
+    }
+}
+
+/// 记录反馈调用的测试替身。
+final class RecordingIntentFeedback: RemoteIntentFeedbackApplying {
+    struct Call {
+        let sessionId: UUID
+        let status: StatusResponse?
+        let nowPlaying: NowPlayingResponse?
+        let track: LanShareTrack?
+        let authoritativeDate: Date?
+    }
+
+    private(set) var applied: [Call] = []
+    private let lock = NSLock()
+
+    func apply(
+        sessionId: UUID,
+        status: StatusResponse?,
+        nowPlaying: NowPlayingResponse?,
+        track: LanShareTrack?,
+        authoritativeDate: Date?
+    ) async {
+        lock.lock()
+        applied.append(Call(sessionId: sessionId, status: status, nowPlaying: nowPlaying, track: track, authoritativeDate: authoritativeDate))
+        lock.unlock()
     }
 }
 

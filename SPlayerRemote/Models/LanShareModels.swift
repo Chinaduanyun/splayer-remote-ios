@@ -17,6 +17,11 @@ enum LanShareLimits {
     static let maxTracks = 2000
     static let maxLyricLines = 5000
     static let maxURLLength = 2048
+    static let maxArtists = 8
+    static let maxArtistLine = 240
+    /// 局域网元数据响应体字节上限（流式读取，超限即停止）。
+    static let maxQueueResponseBytes = 1_000_000
+    static let maxLyricResponseBytes = 512_000
 }
 
 /// 对来自对端的原始值做类型容错与长度裁剪。
@@ -79,9 +84,12 @@ struct LanShareTrack: Equatable, Identifiable {
     let coverURL: URL?
 
     /// 艺人行，例如 `A / B`；没有任何艺人时为 `nil`。
+    /// 数量与聚合长度均有限制，避免异常数据撑爆 UI / Activity 载荷。
     var artistLine: String? {
-        let names = artists.map(\.name).filter { !$0.isEmpty }
-        return names.isEmpty ? nil : names.joined(separator: " / ")
+        let names = artists.prefix(LanShareLimits.maxArtists).map(\.name).filter { !$0.isEmpty }
+        guard !names.isEmpty else { return nil }
+        let joined = names.joined(separator: " / ")
+        return String(joined.prefix(LanShareLimits.maxArtistLine))
     }
 
     /// 时长文本；未知 (>0 才有效) 时为 `nil`。
@@ -93,10 +101,12 @@ struct LanShareTrack: Equatable, Identifiable {
 
     static func decode(_ raw: [String: Any]) -> LanShareTrack? {
         guard let id = LanShareSanitizer.identifier(raw["id"]) else { return nil }
-        let artists: [LanShareArtist] = (raw["artists"] as? [[String: Any]])?.compactMap { item in
-            guard let name = LanShareSanitizer.text(item["name"], limit: LanShareLimits.artist) else { return nil }
-            return LanShareArtist(id: LanShareSanitizer.identifier(item["id"]), name: name)
-        } ?? []
+        let artists: [LanShareArtist] = ((raw["artists"] as? [[String: Any]]) ?? [])
+            .prefix(LanShareLimits.maxArtists)
+            .compactMap { item in
+                guard let name = LanShareSanitizer.text(item["name"], limit: LanShareLimits.artist) else { return nil }
+                return LanShareArtist(id: LanShareSanitizer.identifier(item["id"]), name: name)
+            }
 
         var album: LanShareAlbum?
         if let rawAlbum = raw["album"] as? [String: Any] {
@@ -218,8 +228,9 @@ struct LanShareLyricDocument: Equatable {
         }
 
         let input = payload["input"] as? [String: Any]
-        let content = LanShareSanitizer.text(input?["content"], limit: LanShareLimits.maxLyricLines * LanShareLimits.lyricLine) ?? ""
-        let translation = (input?["translation"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let maxChars = LanShareLimits.maxLyricLines * LanShareLimits.lyricLine
+        let content = LanShareSanitizer.text(input?["content"], limit: maxChars) ?? ""
+        let translation = LanShareSanitizer.text(input?["translation"], limit: maxChars) ?? ""
         let lines = LRCParser.parse(content: content, translation: translation)
         return LanShareLyricDocument(revision: revision, source: source, lines: lines, isSupported: true)
     }
@@ -232,9 +243,12 @@ enum LRCParser {
     )
 
     static func parse(content: String, translation: String) -> [LanShareLyricLine] {
-        let primary = timedLines(from: content)
+        let primary = timedLines(from: content, limit: LanShareLimits.maxLyricLines)
         guard !primary.isEmpty else { return [] }
-        let translated = Dictionary(timedLines(from: translation).map { ($0.timeMs, $0.text) }, uniquingKeysWith: { first, _ in first })
+        let translated = Dictionary(
+            timedLines(from: translation, limit: LanShareLimits.maxLyricLines).map { ($0.timeMs, $0.text) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         return primary
             .prefix(LanShareLimits.maxLyricLines)
@@ -249,10 +263,10 @@ enum LRCParser {
             }
     }
 
-    private static func timedLines(from text: String) -> [(timeMs: Int, text: String)] {
+    private static func timedLines(from text: String, limit: Int) -> [(timeMs: Int, text: String)] {
         guard !text.isEmpty, let regex = tagPattern else { return [] }
         var result: [(Int, String)] = []
-        for rawLine in text.components(separatedBy: .newlines) {
+        scan: for rawLine in text.components(separatedBy: .newlines) {
             let range = NSRange(rawLine.startIndex..<rawLine.endIndex, in: rawLine)
             let matches = regex.matches(in: rawLine, range: range)
             guard !matches.isEmpty else { continue }
@@ -263,6 +277,8 @@ enum LRCParser {
             guard !rawContent.isEmpty else { continue }
             let content = String(rawContent.prefix(LanShareLimits.lyricLine))
             for match in matches {
+                // 提前封顶：异常超多时间戳不会先构建完整数组再排序。
+                guard result.count < limit else { break scan }
                 guard let time = timeMs(from: match, in: rawLine) else { continue }
                 result.append((time, content))
             }

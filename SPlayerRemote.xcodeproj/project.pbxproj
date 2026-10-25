@@ -233,6 +233,18 @@
 			path = "SPlayerRemoteTests/LiveActivityModelTests.swift";
 			sourceTree = "<group>";
 		};
+		EEE5AA0C9AD2120645B9C49C = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemoteTests/LiveActivityControllerTests.swift";
+			sourceTree = "<group>";
+		};
+		96B4BFAD9D18A0F58894DDC4 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "SPlayerRemoteTests/IntentExecutionTests.swift";
+			sourceTree = "<group>";
+		};
 		6316458738A4F146D22011C9 = {
 			isa = PBXFileReference;
 			lastKnownFileType = folder.assetcatalog;
@@ -420,6 +432,14 @@
 			isa = PBXBuildFile;
 			fileRef = 6DB9B8CE0D68D7B05119CC3B /* LiveActivityModelTests.swift */;
 		};
+		0A03D9E0CF79A52017A21576 = {
+			isa = PBXBuildFile;
+			fileRef = EEE5AA0C9AD2120645B9C49C /* LiveActivityControllerTests.swift */;
+		};
+		F811DD83A3C5F3E70DECE9CE = {
+			isa = PBXBuildFile;
+			fileRef = 96B4BFAD9D18A0F58894DDC4 /* IntentExecutionTests.swift */;
+		};
 		44009BEAAB1A2C74C30569A1 = {
 			isa = PBXBuildFile;
 			fileRef = D89EEF9759B475E4EF3CF5A7 /* SPlayerRemoteLiveActivityBundle.swift */;
@@ -506,6 +526,8 @@
 				7809E5F62C15233F5A2A5F7D,
 				49FBA05105D79DABE78E5477,
 				6DB9B8CE0D68D7B05119CC3B,
+				EEE5AA0C9AD2120645B9C49C,
+				96B4BFAD9D18A0F58894DDC4,
 			);
 			name = "SPlayerRemoteTests";
 			sourceTree = "<group>";
@@ -593,6 +615,8 @@
 				E65377AA5A4FC72945244E9A /* CoverImageLoaderTests.swift */,
 				D4499E0FAD8F7DB7A69D3300 /* V12ViewModelTests.swift */,
 				6540EF45B47B741C48B6E68E /* LiveActivityModelTests.swift */,
+				0A03D9E0CF79A52017A21576 /* LiveActivityControllerTests.swift */,
+				F811DD83A3C5F3E70DECE9CE /* IntentExecutionTests.swift */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

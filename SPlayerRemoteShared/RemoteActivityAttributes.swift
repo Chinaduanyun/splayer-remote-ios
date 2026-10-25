@@ -32,16 +32,43 @@ enum RemoteControlCommand: String, CaseIterable {
     case next
 }
 
+/// Intent 执行失败的友好错误。
+///
+/// 由 `perform()` 抛出，AppIntents 会把 `errorDescription` 反馈给系统；
+/// 扩展进程的 fallback 也抛错，绝不静默返回成功。
+enum RemoteActivityCommandError: LocalizedError, Equatable {
+    case extensionUnavailable
+    case invalidCommand
+    case noAuthorizedSession
+    case deliveryFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .extensionUnavailable:
+            return "请在 SPlayer 遥控器 App 内使用锁屏控制。"
+        case .invalidCommand:
+            return "无法识别的播放命令。"
+        case .noAuthorizedSession:
+            return "请先在 App 内连接 SPlayer，再使用锁屏控制。"
+        case .deliveryFailed:
+            return "无法连接到 SPlayer，请打开 App 检查连接。"
+        }
+    }
+}
+
 /// 交互式 Live Activity 意图。
 ///
-/// 采用 `LiveActivityIntent`：由系统在 **App 进程** 中执行，因此可以访问 App 的钥匙串与
-/// 已保存配置；扩展进程绝不联网。`perform()` 只调用一次有界 HTTP 命令，不做重放 / 轮询。
+/// 采用 `LiveActivityIntent`：由系统在 **App 进程** 中执行，因此可以访问 App 内存中的
+/// 已授权会话；扩展进程绝不联网。
+///
+/// `command` 必须是 `@Parameter`：AppIntents 在重建 intent 时通过参数序列化传递值，
+/// 仅靠初始化器赋值的普通属性无法作为可靠传输契约。
 struct RemoteControlIntent: LiveActivityIntent {
 
     static var title: LocalizedStringResource = "SPlayer 控制"
     static var description: IntentDescription? = IntentDescription("在锁屏或灵动岛控制 SPlayer 播放。")
 
-    /// 命令 rawValue（`RemoteCommand` 的 rawValue）。非配置项，仅由控件构造。
+    @Parameter(title: "命令")
     var command: String
 
     init() {
@@ -49,21 +76,25 @@ struct RemoteControlIntent: LiveActivityIntent {
     }
 
     init(command: RemoteControlCommand) {
+        self.init()
         self.command = command.rawValue
     }
 
     func perform() async throws -> some IntentResult {
-        await RemoteIntentCommandExecutor.perform(rawCommand: command)
+        // 失败会带友好错误抛给系统，绝不把未执行 / 失败当成成功。
+        try await RemoteIntentCommandExecutor.perform(rawCommand: command)
         return .result()
     }
 }
 
 #if !APP_TARGET
-/// 扩展进程内的空实现。
+/// 扩展进程内的 fallback。
 ///
-/// 交互式 Live Activity 的 intent 由 App 进程执行，扩展二进制中的这一份**永远不会被调用**；
-/// 它刻意不做任何事，也不谎报成功，从而保证扩展侧绝不发起网络请求。
+/// 交互式 Live Activity 的 intent 由 App 进程执行，扩展二进制中的这一份**不执行任何网络操作**；
+/// 它明确抛错（而不是返回成功），避免在意外被执行时谎报结果。
 enum RemoteIntentCommandExecutor {
-    static func perform(rawCommand: String) async {}
+    static func perform(rawCommand: String) async throws {
+        throw RemoteActivityCommandError.extensionUnavailable
+    }
 }
 #endif

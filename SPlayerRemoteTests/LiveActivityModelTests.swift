@@ -53,6 +53,23 @@ final class LiveActivityModelTests: XCTestCase {
         XCTAssertTrue(state.connectionAvailable)
     }
 
+    func testContentStateTruncatesToConservativeActivityBudget() {
+        let long = String(repeating: "x", count: 1_000)
+        let snapshot = RemoteActivitySnapshot(
+            title: long,
+            artist: long,
+            songId: long,
+            isPlaying: true,
+            isBuffering: false,
+            connectionAvailable: true,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let state = RemoteActivityAttributes.ContentState(snapshot: snapshot)
+        XCTAssertEqual(state.title.count, RemoteActivityLimits.title)
+        XCTAssertEqual(state.artist.count, RemoteActivityLimits.artist)
+        XCTAssertEqual(state.songId.count, RemoteActivityLimits.songId)
+    }
+
     func testControlCommandsMapToRemoteCommands() {
         for command in RemoteControlCommand.allCases {
             XCTAssertNotNil(RemoteCommand(rawValue: command.rawValue), "命令 \(command.rawValue) 必须映射到 RemoteCommand")

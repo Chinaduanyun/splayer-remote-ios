@@ -219,6 +219,12 @@ final class RemoteAPIClientTests: XCTestCase {
         XCTAssertNil(queue)
     }
 
+    func testLanShareResponseOverByteLimitIsRejected() async {
+        let oversized = Data(repeating: UInt8(ascii: "a"), count: LanShareLimits.maxLyricResponseBytes + 1)
+        MockURLProtocol.setHandler { _ in (200, oversized) }
+        await assertError(.responseTooLarge) { _ = try await self.makeClient().fetchLanShareLyric() }
+    }
+
     // MARK: - Helpers
 
     private func assertError(

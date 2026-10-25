@@ -29,6 +29,9 @@ final class MockRemoteAPI: RemoteAPI {
     var volumeResult: Result<Void, Error> = .success(())
     var lanShareQueueResult: Result<LanShareQueue?, Error> = .success(nil)
     var lanShareLyricResult: Result<LanShareLyricDocument?, Error> = .success(nil)
+    /// 按调用顺序消费的队列 / 歌词结果；耗尽后回退到上面的单个结果。
+    var lanShareQueueResults: [Result<LanShareQueue?, Error>] = []
+    var lanShareLyricResults: [Result<LanShareLyricDocument?, Error>] = []
 
     /// 可选的异步「挂起」钩子，用于确定性地测试延迟返回 / 取消 / 后台场景。
     var infoDelay: (() async -> Void)?
@@ -88,12 +91,18 @@ final class MockRemoteAPI: RemoteAPI {
     func fetchLanShareQueue() async throws -> LanShareQueue? {
         lanShareQueueCallCount += 1
         if let lanShareQueueDelay { await lanShareQueueDelay() }
+        if !lanShareQueueResults.isEmpty {
+            return try lanShareQueueResults.removeFirst().get()
+        }
         return try lanShareQueueResult.get()
     }
 
     func fetchLanShareLyric() async throws -> LanShareLyricDocument? {
         lanShareLyricCallCount += 1
         if let lanShareLyricDelay { await lanShareLyricDelay() }
+        if !lanShareLyricResults.isEmpty {
+            return try lanShareLyricResults.removeFirst().get()
+        }
         return try lanShareLyricResult.get()
     }
 }
@@ -151,7 +160,10 @@ final class MockURLProtocol: URLProtocol {
                 url: request.url ?? URL(string: "http://localhost")!,
                 statusCode: status,
                 httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": "application/json"]
+                headerFields: [
+                    "Content-Type": "application/json",
+                    "Content-Length": String(data.count),
+                ]
             )!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)

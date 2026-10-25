@@ -178,7 +178,11 @@ xcodebuild test \
   不写入 `UserDefaults` / 明文文件 / 日志；写入失败会显式报错，绝不静默降级。
 - **交互式 Live Activity**：按钮 intent 由 **App 进程** 执行（`LiveActivityIntent`），扩展进程绝不联网；
   Activity 内容状态只含标题 / 艺人 / 歌曲 ID / 播放状态 / 更新时间 / 连接可用性，
-  **不含**主机、端口、Token 或任何 URL；无有效配置或设备未解锁时不发请求，只标记连接不可用。
+  **不含**主机、端口、Token 或任何 URL。命令只使用 App 进程内存中的**已授权会话**
+  （连接成功且用户开启实时活动后登记）；冷启动 / 未连接 / 已断开 / 已关闭实时活动时不发请求，
+  而是返回“请先打开 App 连接”的友好错误。App 进程被系统终止后锁屏按钮需重新打开 App。
+  钥匙串可访问性仍为 `AfterFirstUnlockThisDeviceOnly`：设备**首次解锁后**可用；系统可能在需要时
+  要求解锁。App 不把“当前已解锁”作为额外门控，也不记录 Token。
 - **封面下载**：使用独立、无 Cookie、无自定义头、拒绝重定向的会话，只接受 http / https 地址，
   绝不使用 `nowPlaying.src` 等媒体地址，也不会向第三方 CDN 携带 Token。
 - **明文 HTTP**：局域网直连使用 `http://`，Token 会以明文经过受信任的 WiFi。
@@ -260,14 +264,22 @@ iOS 26 Liquid Glass 的具体 API 名称 / 签名（`.glassEffect(_:in:)`、`.bu
   关闭偏好不建连、后台 / 断开后迟到回调丢弃、早于 WS 的轮询结果丢弃、
   平滑进度播放推进 / 暂停 / 过期 / 后台冻结、跳转与音量快捷操作（单次请求、不自动重试）。
 - `LanShareTests`：队列 / 歌词合成夹具解码、`songId`（而非过期 `playIndex`）匹配、
-  缺失字段容错不伪造、文本长度裁剪、封面 URL 仅 http/https、LRC 翻译与高亮、
-  不支持格式优雅降级。
-- `RemoteAPIClientTests`（新增）：`getQueue` 路径替换 / 鉴权头 / Token 不入 URL、
-  `403 -> forbidden`、`ok:false -> nil`。
+  缺失字段容错不伪造、文本长度裁剪、艺人数量 / 聚合长度上限、超大翻译与海量时间戳封顶、
+  封面 URL 仅 http/https、LRC 翻译与高亮、不支持格式优雅降级。
+- `RemoteAPIClientTests`：`getQueue` 路径替换 / 鉴权头 / Token 不入 URL、
+  `403 -> forbidden`、`ok:false -> nil`、超过字节上限的响应 -> `responseTooLarge`。
 - `CoverImageLoaderTests`：封面请求**不携带** Token / `X-SPlayer-Token` / Cookie、
   拒绝非 http(s)、成功缓存。
 - `V12ViewModelTests`：`.inactive` 保留会话、`.background` 后回前台立即刷新 / 恢复单条 socket、
   主动断开后不自动恢复、元数据 `403` 优雅降级且控制仍可用、迟到元数据响应丢弃、
-  Live Activity 快照含元数据且不含凭据、关闭 / 断开结束 Activity。
+  **intent 会话**仅在已连接 + 已启用时登记并在断开 / 关闭 / 连接替换 / 鉴权失败时失效、
+  **曲目切换清空歌词 + 合并刷新**、元数据失败清除过期展示、后台中断后恢复、
+  **鉴权失败锁存**直到显式连接、Live Activity 快照含元数据且不含凭据、关闭 / 断开结束 Activity。
+- `IntentExecutionTests`：intent `command` 由 `@Parameter` 承载、非法命令 / 空命令抛错且不发请求、
+  无授权会话 / 失效会话零请求、未确认命令只尝试一次不重试、成功后用 now-playing + 队列刷新、
+  刷新失败不伪造新鲜度、扩展 fallback 错误友好。
+- `LiveActivityControllerTests`：注入式后端验证两次首次更新只建一个 Activity、
+  时间戳爆发被内容键限频、`end` 压过待执行更新且不被迟到更新重建、禁用 / 重启用、
+  `staleDate` 预算；反馈构建器验证新曲目清空旧元数据、刷新失败保留旧时间戳。
 - `LiveActivityModelTests`：内容状态仅含允许字段（无 host/token/url）、快照映射、
   控制命令到 `RemoteCommand` 映射。

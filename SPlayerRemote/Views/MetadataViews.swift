@@ -10,6 +10,7 @@ struct CoverImageView: View {
 
     @State private var image: UIImage?
     @State private var failed = false
+    @State private var requestID = UUID()
 
     var body: some View {
         ZStack {
@@ -31,22 +32,29 @@ struct CoverImageView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
         )
-        .task(id: url) { await load() }
+        .task(id: url) {
+            let currentRequest = UUID()
+            requestID = currentRequest
+            await load(url, requestID: currentRequest)
+        }
         .accessibilityHidden(true)
     }
 
-    private func load() async {
-        guard let url else {
-            image = nil
-            failed = false
-            return
-        }
-        if let cached = CoverImageLoader.shared.cachedImage(for: url) {
+    private func load(_ target: URL?, requestID currentRequest: UUID) async {
+        // URL 变化时立即清空旧图，避免展示上一首封面。
+        image = nil
+        failed = false
+        guard let target else { return }
+
+        if let cached = CoverImageLoader.shared.cachedImage(for: target) {
+            guard !Task.isCancelled, requestID == currentRequest, url == target else { return }
             image = cached
-            failed = false
             return
         }
-        let loaded = await CoverImageLoader.shared.image(for: url)
+
+        let loaded = await CoverImageLoader.shared.image(for: target)
+        // 只有仍为当前请求（未被取消 / URL 未变）时才写入结果，避免慢 A 覆盖快 B。
+        guard !Task.isCancelled, requestID == currentRequest, url == target else { return }
         image = loaded
         failed = loaded == nil
     }
